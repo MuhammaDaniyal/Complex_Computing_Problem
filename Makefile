@@ -66,3 +66,4 @@ depend:
 clean:
 	rm -f *.o *.a $(EXAMPLES:.c=) *.tar *.tar.gz libklt.a \
 	      feat*.ppm features.ft features.txt gmon.out
+	rm -f $(EXEC) $(OBJS) *~ gmon.out
