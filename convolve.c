@@ -11,6 +11,7 @@
 #include "base.h"
 #include "error.h"
 #include "convolve.h"
+#include <time.h>
 #include "klt_util.h"   /* printing */
 
 #define MAX_KERNEL_WIDTH 	71
@@ -133,52 +134,14 @@ void _KLTGetKernelWidths(
 /*********************************************************************
  * _convolveImageHoriz
  */
-
+ #include "Horizontal_GPU.h"
+ #include <cuda.h>
 static void _convolveImageHoriz(
   _KLT_FloatImage imgin,
   ConvolutionKernel kernel,
   _KLT_FloatImage imgout)
 {
-  float *ptrrow = imgin->data;           /* Points to row's first pixel */
-  register float *ptrout = imgout->data, /* Points to next output pixel */
-    *ppp;
-  register float sum;
-  register int radius = kernel.width / 2;
-  register int ncols = imgin->ncols, nrows = imgin->nrows;
-  register int i, j, k;
-
-  /* Kernel width must be odd */
-  assert(kernel.width % 2 == 1);
-
-  /* Must read from and write to different images */
-  assert(imgin != imgout);
-
-  /* Output image must be large enough to hold result */
-  assert(imgout->ncols >= imgin->ncols);
-  assert(imgout->nrows >= imgin->nrows);
-
-  /* For each row, do ... */
-  for (j = 0 ; j < nrows ; j++)  {
-
-    /* Zero leftmost columns */
-    for (i = 0 ; i < radius ; i++)
-      *ptrout++ = 0.0;
-
-    /* Convolve middle columns with kernel */
-    for ( ; i < ncols - radius ; i++)  {
-      ppp = ptrrow + i - radius;
-      sum = 0.0;
-      for (k = kernel.width-1 ; k >= 0 ; k--)
-        sum += *ppp++ * kernel.data[k];
-      *ptrout++ = sum;
-    }
-
-    /* Zero rightmost columns */
-    for ( ; i < ncols ; i++)
-      *ptrout++ = 0.0;
-
-    ptrrow += ncols;
-  }
+  _convolveImageHorizUsingGPU(imgin, kernel.width, kernel.data, imgout);
 }
 
 
@@ -312,6 +275,3 @@ void _KLTComputeSmoothedImage(
 
   _convolveSeparate(img, gauss_kernel, gauss_kernel, smooth);
 }
-
-
-
