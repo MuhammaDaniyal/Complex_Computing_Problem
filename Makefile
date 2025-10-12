@@ -1,69 +1,64 @@
 ######################################################################
-# Choose your favorite C compiler
-CC = gcc
+# Compiler selection
+CC = nvcc
 
 ######################################################################
-# -DNDEBUG prevents the assert() statements from being included in 
-# the code.  If you are having problems running the code, you might 
-# want to comment this line to see if an assert() statement fires.
+# Flags and definitions
 FLAG1 = -DNDEBUG
-
-######################################################################
-# -DKLT_USE_QSORT forces the code to use the standard qsort() 
-# routine.  Otherwise it will use a quicksort routine that takes
-# advantage of our specific data structure to greatly reduce the
-# running time on some machines.  Uncomment this line if for some
-# reason you are unhappy with the special routine.
-# FLAG2 = -DKLT_USE_QSORT
-
-######################################################################
-# Add your favorite C flags here.
+# FLAG2 = -DKLT_USE_QSORT   # Uncomment if you want to use standard qsort
 CFLAGS = $(FLAG1) $(FLAG2) -pg
 
-######################################################################
-# There should be no need to modify anything below this line (but
-# feel free to if you want).
+# CUDA flags
+CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart
 
-EXAMPLES = example1.c example2.c example3.c example4.c example5.c
-ARCH = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
-       storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
+######################################################################
+# Source files
+EXAMPLES = example1 example2 example3 example4 example5
+ARCH_C = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
+          storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
+ARCH_CU = Horizontal_GPU.cu
+
 LIB = -L/usr/local/lib -L/usr/lib
 
-.SUFFIXES:  .c .o
-
-all:  lib $(EXAMPLES:.c=)
+######################################################################
+# Compile rules
+.SUFFIXES: .c .o .cu
 
 .c.o:
 	@echo "Compiling $< to $@"
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CFLAGS) $< -o $@
 	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
 
-lib: $(ARCH:.c=.o)
-	@echo "Creating libklt.a with object files: $(ARCH:.c=.o)"
+%.o: %.cu
+	@echo "Compiling CUDA source $< to $@"
+	nvcc -c -O3 $(CUFLAGS) $< -o $@
+	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
+
+######################################################################
+# Build library
+libklt.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	@echo "Creating libklt.a with object files..."
 	rm -f libklt.a
-	ar ruv libklt.a $(ARCH:.c=.o)
-	# rm -f *.o  # Commented out for debugging
-	@echo "Library libklt.a created"
+	ar ruv libklt.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	@echo "Library libklt.a created successfully."
 
-example1: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -pg
+lib: libklt.a
 
-example2: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -pg
+######################################################################
+# Build all examples
+all: libklt.a $(EXAMPLES)
 
-example3: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -pg
+$(EXAMPLES): %: %.c libklt.a
+	@echo "Linking $@ ..."
+	nvcc -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -lcudart -pg
+	@if [ -f $@ ]; then echo "$@ built successfully"; else echo "Failed to build $@"; exit 1; fi
 
-example4: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -pg
-
-example5: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm -pg
-
+######################################################################
+# Dependencies and cleanup
 depend:
-	makedepend $(ARCH) $(EXAMPLES)
+	makedepend $(ARCH_C) $(ARCH_CU) $(EXAMPLES:=.c)
 
 clean:
-	rm -f *.o *.a $(EXAMPLES:.c=) *.tar *.tar.gz libklt.a \
-	      feat*.ppm features.ft features.txt gmon.out
+	rm -f *.o *.a $(EXAMPLES) *.tar *.tar.gz libklt.a \
+	      feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
 	rm -f $(EXEC) $(OBJS) *~ gmon.out
