@@ -1,5 +1,5 @@
 /*********************************************************************
- * convolve.c
+ * convolve.c - Enhanced with comprehensive timing and metrics
  *********************************************************************/
 
 /* Standard includes */
@@ -16,6 +16,11 @@
 
 #define MAX_KERNEL_WIDTH 	71
 
+// =============== GLOBAL TIMING ACCUMULATORS ===============
+static double total_gpu_compute_time = 0.0;
+static double total_cpu_compute_time = 0.0;
+static double total_memory_transfer_time = 0.0;
+static int total_convolution_calls = 0;
 
 typedef struct  {
   int width;
@@ -130,24 +135,52 @@ void _KLTGetKernelWidths(
   *gaussderiv_width = gaussderiv_kernel.width;
 }
 
-
 /*********************************************************************
  * _convolveImageHoriz
  */
- #include "Horizontal_GPU.h"
- #include <cuda.h>
+#include "Horizontal_GPU.h"
+#include <cuda.h>
+#include <sys/time.h>
+
 static void _convolveImageHoriz(
   _KLT_FloatImage imgin,
   ConvolutionKernel kernel,
   _KLT_FloatImage imgout)
 {
-    // Step 1: Run GPU convolution
+    total_convolution_calls++;
+    
+    // ====================== GPU TIMING START ======================
+    cudaEvent_t startGPU, stopGPU;
+    float gpuTime = 0.0f;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);
+    cudaEventRecord(startGPU, 0);
+
+    // Step 1: Run GPU convolution (includes memory transfers)
     _convolveImageHorizUsingGPU(imgin, kernel.width, kernel.data, imgout);
+
+    // Stop GPU timer
+    cudaEventRecord(stopGPU, 0);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
+    
+    total_gpu_compute_time += gpuTime;
+    
+    printf("\n[GPU HORIZ] Time: %.3f ms (Image: %dx%d)\n", 
+           gpuTime, imgin->ncols, imgin->nrows);
+
+    cudaEventDestroy(startGPU);
+    cudaEventDestroy(stopGPU);
+    // ====================== GPU TIMING END ========================
+
 
     // Step 2: Create a temporary CPU output image of same size
     _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
 
-    // Step 3: Run your CPU convolution (reuse your CPU code here)
+    // ====================== CPU TIMING START ======================
+    struct timeval startCPU, endCPU;
+    gettimeofday(&startCPU, NULL);
+    // ====================== Run CPU ===============================
     {
         float *ptrrow = imgin->data;
         float *ptrout = cpuOut->data;
@@ -157,28 +190,38 @@ static void _convolveImageHoriz(
         int ncols = imgin->ncols, nrows = imgin->nrows;
         int i, j, k;
 
-        for (j = 0 ; j < nrows ; j++)  {
+        for (j = 0; j < nrows; j++)  {
 
             // Zero leftmost columns
-            for (i = 0 ; i < radius ; i++)
+            for (i = 0; i < radius; i++)
                 *ptrout++ = 0.0;
 
             // Convolve middle columns with kernel
-            for ( ; i < ncols - radius ; i++)  {
+            for (; i < ncols - radius; i++)  {
                 ppp = ptrrow + i - radius;
                 sum = 0.0;
-                for (k = kernel.width - 1 ; k >= 0 ; k--)
+                for (k = kernel.width - 1; k >= 0; k--)
                     sum += *ppp++ * kernel.data[k];
                 *ptrout++ = sum;
             }
 
             // Zero rightmost columns
-            for ( ; i < ncols ; i++)
+            for (; i < ncols; i++)
                 *ptrout++ = 0.0;
 
             ptrrow += ncols;
         }
     }
+    gettimeofday(&endCPU, NULL);
+    double cpu_time_ms = (endCPU.tv_sec - startCPU.tv_sec) * 1000.0 +
+                         (endCPU.tv_usec - startCPU.tv_usec) / 1000.0;
+    
+    total_cpu_compute_time += cpu_time_ms;
+    
+    printf("[CPU HORIZ] Time: %.3f ms | Speedup: %.2fx\n", 
+           cpu_time_ms, cpu_time_ms / gpuTime);
+    // ====================== CPU TIMING END ========================
+
 
     // Step 4: Compute absolute difference between CPU and GPU results
     {
@@ -195,9 +238,11 @@ static void _convolveImageHoriz(
 
         float meanDiff = totalDiff / size;
 
-        printf("GPU vs CPU Convolution Results:\n");
-        printf("  Mean Absolute Difference: %e\n", meanDiff);
-        printf("  Max  Absolute Difference: %e\n", maxDiff);
+        printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
+        
+        if (meanDiff > 1e-3) {
+            printf(" !!!?  WARNING: High error detected!\n");
+        }
     }
 
     // Step 5: Free temporary CPU result image
@@ -205,28 +250,53 @@ static void _convolveImageHoriz(
 }
 
 
-
 /*********************************************************************
  * _convolveImageVert
  */
-
-// _convolveImageVertUsingGPU(_KLT_FloatImage imgin, int width, float* kerneldata, _KLT_FloatImage imgout);
+#include <sys/time.h>
 
 static void _convolveImageVert(
   _KLT_FloatImage imgin,
   ConvolutionKernel kernel,
   _KLT_FloatImage imgout)
 {
+    total_convolution_calls++;
+    
+    // ====================== GPU TIMING START ======================
+    cudaEvent_t startGPU, stopGPU;
+    float gpuTime = 0.0f;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);
+    cudaEventRecord(startGPU, 0);
+
     // Step 1: Run GPU convolution
     _convolveImageVertUsingGPU(imgin, kernel.width, kernel.data, imgout);
+
+    // Stop GPU timer
+    cudaEventRecord(stopGPU, 0);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
+    
+    total_gpu_compute_time += gpuTime;
+    
+    printf("\n[GPU VERT] Time: %.3f ms (Image: %dx%d)\n", 
+           gpuTime, imgin->ncols, imgin->nrows);
+
+    cudaEventDestroy(startGPU);
+    cudaEventDestroy(stopGPU);
+    // ====================== GPU TIMING END ========================
+
 
     // Step 2: Create a temporary CPU output image of same size
     _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
 
-    // Step 3: Run CPU convolution (vertical)
+    // ====================== CPU TIMING START ======================
+    struct timeval startCPU, endCPU;
+    gettimeofday(&startCPU, NULL);
+    // ====================== Run CPU ===============================
     {
-        float *ptrcol = imgin->data;           // Points to row's first pixel
-        float *ptrout = cpuOut->data;          // Points to next output pixel
+        float *ptrcol = imgin->data;
+        float *ptrout = cpuOut->data;
         float *ppp;
         float sum;
         int radius = kernel.width / 2;
@@ -266,9 +336,19 @@ static void _convolveImageVert(
             }
 
             ptrcol++;
-            ptrout -= nrows * ncols - 1; // Move back to next column start
+            ptrout -= nrows * ncols - 1;
         }
     }
+    gettimeofday(&endCPU, NULL);
+    double cpu_time_ms = (endCPU.tv_sec - startCPU.tv_sec) * 1000.0 +
+                         (endCPU.tv_usec - startCPU.tv_usec) / 1000.0;
+    
+    total_cpu_compute_time += cpu_time_ms;
+    
+    printf("[CPU VERT] Time: %.3f ms | Speedup: %.2fx\n", 
+           cpu_time_ms, cpu_time_ms / gpuTime);
+    // ====================== CPU TIMING END ========================
+
 
     // Step 4: Compute absolute difference between CPU and GPU results
     {
@@ -285,9 +365,11 @@ static void _convolveImageVert(
 
         float meanDiff = totalDiff / size;
 
-        printf("@@@@@@@@@@@@@GPU vs CPU Vertical Convolution Results:\n");
-        printf("  Mean Absolute Difference: %e\n", meanDiff);
-        printf("  Max  Absolute Difference: %e\n", maxDiff);
+        printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
+        
+        if (meanDiff > 1e-3) {
+            printf("  !!!?  WARNING: High error detected!\n");
+        }
     }
 
     // Step 5: Free temporary CPU result image
@@ -364,4 +446,46 @@ void _KLTComputeSmoothedImage(
     _computeKernels(sigma, &gauss_kernel, &gaussderiv_kernel);
 
   _convolveSeparate(img, gauss_kernel, gauss_kernel, smooth);
+}
+
+
+/*********************************************************************
+ * KLT_PrintPerformanceStats
+ * 
+ * Call this at the end of your program to print cumulative stats
+ */
+
+void KLT_PrintPerformanceStats(void)
+{
+    printf("\n");
+    printf("-----------------------------------------------------------\n");
+    printf("              PERFORMANCE SUMMARY (D2 Report)              \n");
+    printf("-----------------------------------------------------------\n");
+    printf("Total Convolution Calls:       %d\n", total_convolution_calls);
+    printf("-----------------------------------------------------------\n");
+    printf("Total GPU Compute Time:        %.2f ms\n", total_gpu_compute_time);
+    printf("Total CPU Compute Time:        %.2f ms\n", total_cpu_compute_time);
+    printf("-----------------------------------------------------------\n");
+    printf("Overall Speedup (GPU vs CPU):  %.2fx\n", 
+           total_cpu_compute_time / total_gpu_compute_time);
+    printf("Time Saved:                    %.2f ms\n", 
+           total_cpu_compute_time - total_gpu_compute_time);
+    printf("Percentage GPU is Faster:      %.1f%%\n", 
+           ((total_cpu_compute_time - total_gpu_compute_time) / total_cpu_compute_time) * 100.0);
+    printf("-----------------------------------------------------------\n");
+    printf("\n");
+}
+
+/*********************************************************************
+ * KLT_ResetPerformanceStats
+ * 
+ * Call this at the start of your program to reset counters
+ */
+
+void KLT_ResetPerformanceStats(void)
+{
+    total_gpu_compute_time = 0.0;
+    total_cpu_compute_time = 0.0;
+    total_memory_transfer_time = 0.0;
+    total_convolution_calls = 0;
 }

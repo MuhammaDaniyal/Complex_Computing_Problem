@@ -29,4 +29,7 @@ void _KLTComputeSmoothedImage(
   float sigma,
   _KLT_FloatImage smooth);
 
+void KLT_PrintPerformanceStats(void);
+void KLT_ResetPerformanceStats(void);
+
 #endif

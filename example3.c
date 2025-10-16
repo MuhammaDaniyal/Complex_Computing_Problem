@@ -18,6 +18,8 @@ int RunExample3()
 int main()
 #endif
 {
+  KLT_ResetPerformanceStats();
+  
   unsigned char *img1, *img2;
   char fnamein[100], fnameout[100];
   KLT_TrackingContext tc;
@@ -60,6 +62,8 @@ int main()
   KLTFreeTrackingContext(tc);
   free(img1);
   free(img2);
+  
+  KLT_PrintPerformanceStats();
 
   return 0;
 }
