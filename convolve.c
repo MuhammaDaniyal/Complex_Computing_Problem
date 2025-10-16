@@ -141,67 +141,157 @@ static void _convolveImageHoriz(
   ConvolutionKernel kernel,
   _KLT_FloatImage imgout)
 {
-  _convolveImageHorizUsingGPU(imgin, kernel.width, kernel.data, imgout);
+    // Step 1: Run GPU convolution
+    _convolveImageHorizUsingGPU(imgin, kernel.width, kernel.data, imgout);
+
+    // Step 2: Create a temporary CPU output image of same size
+    _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
+
+    // Step 3: Run your CPU convolution (reuse your CPU code here)
+    {
+        float *ptrrow = imgin->data;
+        float *ptrout = cpuOut->data;
+        float *ppp;
+        float sum;
+        int radius = kernel.width / 2;
+        int ncols = imgin->ncols, nrows = imgin->nrows;
+        int i, j, k;
+
+        for (j = 0 ; j < nrows ; j++)  {
+
+            // Zero leftmost columns
+            for (i = 0 ; i < radius ; i++)
+                *ptrout++ = 0.0;
+
+            // Convolve middle columns with kernel
+            for ( ; i < ncols - radius ; i++)  {
+                ppp = ptrrow + i - radius;
+                sum = 0.0;
+                for (k = kernel.width - 1 ; k >= 0 ; k--)
+                    sum += *ppp++ * kernel.data[k];
+                *ptrout++ = sum;
+            }
+
+            // Zero rightmost columns
+            for ( ; i < ncols ; i++)
+                *ptrout++ = 0.0;
+
+            ptrrow += ncols;
+        }
+    }
+
+    // Step 4: Compute absolute difference between CPU and GPU results
+    {
+        float totalDiff = 0.0f;
+        float maxDiff = 0.0f;
+        int size = imgin->ncols * imgin->nrows;
+
+        for (int idx = 0; idx < size; idx++) {
+            float diff = fabs(cpuOut->data[idx] - imgout->data[idx]);
+            totalDiff += diff;
+            if (diff > maxDiff)
+                maxDiff = diff;
+        }
+
+        float meanDiff = totalDiff / size;
+
+        printf("GPU vs CPU Convolution Results:\n");
+        printf("  Mean Absolute Difference: %e\n", meanDiff);
+        printf("  Max  Absolute Difference: %e\n", maxDiff);
+    }
+
+    // Step 5: Free temporary CPU result image
+    _KLTFreeFloatImage(cpuOut);
 }
+
 
 
 /*********************************************************************
  * _convolveImageVert
  */
 
+// _convolveImageVertUsingGPU(_KLT_FloatImage imgin, int width, float* kerneldata, _KLT_FloatImage imgout);
+
 static void _convolveImageVert(
   _KLT_FloatImage imgin,
   ConvolutionKernel kernel,
   _KLT_FloatImage imgout)
 {
-  float *ptrcol = imgin->data;            /* Points to row's first pixel */
-  register float *ptrout = imgout->data,  /* Points to next output pixel */
-    *ppp;
-  register float sum;
-  register int radius = kernel.width / 2;
-  register int ncols = imgin->ncols, nrows = imgin->nrows;
-  register int i, j, k;
+    // Step 1: Run GPU convolution
+    _convolveImageVertUsingGPU(imgin, kernel.width, kernel.data, imgout);
 
-  /* Kernel width must be odd */
-  assert(kernel.width % 2 == 1);
+    // Step 2: Create a temporary CPU output image of same size
+    _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
 
-  /* Must read from and write to different images */
-  assert(imgin != imgout);
+    // Step 3: Run CPU convolution (vertical)
+    {
+        float *ptrcol = imgin->data;           // Points to row's first pixel
+        float *ptrout = cpuOut->data;          // Points to next output pixel
+        float *ppp;
+        float sum;
+        int radius = kernel.width / 2;
+        int ncols = imgin->ncols, nrows = imgin->nrows;
+        int i, j, k;
 
-  /* Output image must be large enough to hold result */
-  assert(imgout->ncols >= imgin->ncols);
-  assert(imgout->nrows >= imgin->nrows);
+        assert(kernel.width % 2 == 1);
+        assert(imgin != cpuOut);
+        assert(cpuOut->ncols >= imgin->ncols);
+        assert(cpuOut->nrows >= imgin->nrows);
 
-  /* For each column, do ... */
-  for (i = 0 ; i < ncols ; i++)  {
+        // For each column, do ...
+        for (i = 0; i < ncols; i++)  {
 
-    /* Zero topmost rows */
-    for (j = 0 ; j < radius ; j++)  {
-      *ptrout = 0.0;
-      ptrout += ncols;
+            // Zero topmost rows
+            for (j = 0; j < radius; j++) {
+                *ptrout = 0.0;
+                ptrout += ncols;
+            }
+
+            // Convolve middle rows with kernel
+            for (; j < nrows - radius; j++) {
+                ppp = ptrcol + ncols * (j - radius);
+                sum = 0.0;
+                for (k = kernel.width - 1; k >= 0; k--) {
+                    sum += *ppp * kernel.data[k];
+                    ppp += ncols;
+                }
+                *ptrout = sum;
+                ptrout += ncols;
+            }
+
+            // Zero bottommost rows
+            for (; j < nrows; j++) {
+                *ptrout = 0.0;
+                ptrout += ncols;
+            }
+
+            ptrcol++;
+            ptrout -= nrows * ncols - 1; // Move back to next column start
+        }
     }
 
-    /* Convolve middle rows with kernel */
-    for ( ; j < nrows - radius ; j++)  {
-      ppp = ptrcol + ncols * (j - radius);
-      sum = 0.0;
-      for (k = kernel.width-1 ; k >= 0 ; k--)  {
-        sum += *ppp * kernel.data[k];
-        ppp += ncols;
-      }
-      *ptrout = sum;
-      ptrout += ncols;
+    // Step 4: Compute absolute difference between CPU and GPU results
+    {
+        float totalDiff = 0.0f;
+        float maxDiff = 0.0f;
+        int size = imgin->ncols * imgin->nrows;
+
+        for (int idx = 0; idx < size; idx++) {
+            float diff = fabs(cpuOut->data[idx] - imgout->data[idx]);
+            totalDiff += diff;
+            if (diff > maxDiff)
+                maxDiff = diff;
+        }
+
+        float meanDiff = totalDiff / size;
+
+        printf("@@@@@@@@@@@@@GPU vs CPU Vertical Convolution Results:\n");
+        printf("  Mean Absolute Difference: %e\n", meanDiff);
+        printf("  Max  Absolute Difference: %e\n", maxDiff);
     }
 
-    /* Zero bottommost rows */
-    for ( ; j < nrows ; j++)  {
-      *ptrout = 0.0;
-      ptrout += ncols;
-    }
-
-    ptrcol++;
-    ptrout -= nrows * ncols - 1;
-  }
+    // Step 5: Free temporary CPU result image
+    _KLTFreeFloatImage(cpuOut);
 }
 
 
