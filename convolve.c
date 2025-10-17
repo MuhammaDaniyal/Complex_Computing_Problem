@@ -241,7 +241,7 @@ static void _convolveImageHoriz(
         printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
         
         if (meanDiff > 1e-3) {
-            printf(" !!!?  WARNING: High error detected!\n");
+            printf(" !!!  WARNING: High error detected!\n");
         }
     }
 
@@ -368,7 +368,7 @@ static void _convolveImageVert(
         printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
         
         if (meanDiff > 1e-3) {
-            printf("  !!!?  WARNING: High error detected!\n");
+            printf("  !!!  WARNING: High error detected!\n");
         }
     }
 
