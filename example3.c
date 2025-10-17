@@ -21,13 +21,17 @@ int main()
   KLT_ResetPerformanceStats();
   
   unsigned char *img1, *img2;
-  char fnamein[100], fnameout[100];
+  char fnamein[200], fnameout[200], imgPath[100];
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
   int nFeatures = 150, nFrames = 10;
   int ncols, nrows;
   int i;
+
+  /* Choose image set */
+  const char *setName = "set2";   // set1, set2, set3, ...
+  sprintf(imgPath, "images/%s/", setName);
 
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
@@ -36,27 +40,35 @@ int main()
   tc->writeInternalImages = FALSE;
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
  
-  img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
+  // Reading first image
+  sprintf(fnamein, "%simg0.pgm", imgPath);
+  img1 = pgmReadFile(fnamein, NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols*nrows*sizeof(unsigned char));
 
+  // Select and store good features
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
-  KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, "feat0.ppm");
+  sprintf(fnameout, "%sfeat0.ppm", imgPath);
+  KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
+  // Track features across subsequent frames
   for (i = 1 ; i < nFrames ; i++)  {
-    sprintf(fnamein, "img%d.pgm", i);
+    sprintf(fnamein, "%simg%d.pgm", imgPath, i);
     pgmReadFile(fnamein, img2, &ncols, &nrows);
     KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
 #ifdef REPLACE
     KLTReplaceLostFeatures(tc, img2, ncols, nrows, fl);
 #endif
     KLTStoreFeatureList(fl, ft, i);
-    sprintf(fnameout, "feat%d.ppm", i);
+    sprintf(fnameout, "%sfeat%d.ppm", imgPath, i);
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
+
+  // Write results
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
 
+  // Free memory
   KLTFreeFeatureTable(ft);
   KLTFreeFeatureList(fl);
   KLTFreeTrackingContext(tc);
@@ -67,4 +79,3 @@ int main()
 
   return 0;
 }
-
