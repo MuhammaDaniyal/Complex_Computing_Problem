@@ -21,89 +21,68 @@ static void checkCudaError(cudaError_t err, const char *file, int line) {
 __constant__ float device_kernel[71];
 
 __global__ void _convolveImageVertKernel(
-    float *kernel, 
-    int radius, 
+    int radius,
     int width,
-    float *imgin,      
-    float *imgout,     
+    float *imgin,
+    float *imgout,
     int ncols,
     int nrows)
 {
-    int col_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int row_idx = blockIdx.y * blockDim.y + threadIdx.y;
-    
-    if (col_idx >= ncols || row_idx >= nrows)
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+   
+    if (col >= ncols || row >= nrows) return;
+   
+    int idx = row * ncols + col;
+   
+    if (row < radius || row >= nrows - radius) {
+        imgout[idx] = 0.0f;
         return;
-    
-    int idx = row_idx * ncols + col_idx;
-    
-    // 0s on Top edge 
-    if (row_idx < radius) {
-        imgout[idx] = 0.0f;
-        return;  
-    }
-    
-    // 0s on bottom edge
-    if (row_idx >= nrows - radius) {
-        imgout[idx] = 0.0f;
-        return;  
     }
 
-    // Convolve middle rows with kernel (matching CPU implementation)
     float sum = 0.0f;
-    int x = 0;
-    
-    for (int k = width - 1; k >= 0; k--) {
-        int current_row = row_idx - radius + x;
-        int current_idx = current_row * ncols + col_idx;
-        sum += imgin[current_idx] * kernel[k];
-        x++;
+    for (int k = 0; k < width; k++) {
+        int r = row - radius + k;
+        int src_idx = r * ncols + col;
+        sum += imgin[src_idx] * device_kernel[k];  
     }
-    
+   
     imgout[idx] = sum;
 }
-
 extern "C" {
     void _convolveImageVertUsingGPU(_KLT_FloatImage imgin, int width, float* kerneldata, _KLT_FloatImage imgout) {
-        float *ptrcol = imgin->data;
-        float *ptrout = imgout->data;
         int radius = width / 2;
         int ncols = imgin->ncols, nrows = imgin->nrows;
-        
-        // Kernel width must be odd
+       
         assert(width % 2 == 1);
-        // Must read from and write to different images
         assert(imgin != imgout);
-        
-        // Output image must be large enough to hold result
         assert(imgout->ncols >= imgin->ncols);
         assert(imgout->nrows >= imgin->nrows);
 
-        float *ptrcol_device;
-        float *ptrout_device;
-        float *kerneldata_device;
-        int size_of_imgin = sizeof(float) * ncols * nrows;
-        int size_of_imgout = sizeof(float) * imgout->ncols * imgout->nrows;
+        float *d_imgin, *d_imgout;
+        int img_size = sizeof(float) * ncols * nrows;
+        int out_size = sizeof(float) * imgout->ncols * imgout->nrows;
 
-        CUDA_CHECK(cudaMalloc((void**)&ptrcol_device, size_of_imgin));
-        CUDA_CHECK(cudaMalloc((void**)&ptrout_device, size_of_imgout));
-        CUDA_CHECK(cudaMalloc((void**)&kerneldata_device, sizeof(float)*71));
+        CUDA_CHECK(cudaMalloc(&d_imgin, img_size));
+        CUDA_CHECK(cudaMalloc(&d_imgout, out_size));
 
-        CUDA_CHECK(cudaMemcpy(ptrcol_device, imgin->data, size_of_imgin, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(ptrout_device, imgout->data, size_of_imgout, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(kerneldata_device, kerneldata, sizeof(float)*71, cudaMemcpyHostToDevice));
-
-        dim3 block(32, 32, 1);
-        dim3 grid((ncols + block.x - 1) / block.x, (nrows + block.y - 1) / block.y, 1);
+        CUDA_CHECK(cudaMemcpy(d_imgin, imgin->data, img_size, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_imgout, imgout->data, out_size, cudaMemcpyHostToDevice));
         
-        _convolveImageVertKernel<<<grid, block>>>(kerneldata_device, radius, width, ptrcol_device, ptrout_device, ncols, nrows);
-        
+        CUDA_CHECK(cudaMemcpyToSymbol(device_kernel, kerneldata, sizeof(float)*71));
+
+        dim3 block(32, 32);
+        dim3 grid((ncols + block.x - 1) / block.x, (nrows + block.y - 1) / block.y);
+
+        _convolveImageVertKernel<<<grid, block>>>(
+            radius, width, d_imgin, d_imgout, ncols, nrows
+        );
+
         CUDA_CHECK(cudaDeviceSynchronize());
-        CUDA_CHECK(cudaMemcpy(imgout->data, ptrout_device, size_of_imgout, cudaMemcpyDeviceToHost));
-        
-        cudaFree(ptrcol_device);
-        cudaFree(ptrout_device);
-        cudaFree(kerneldata_device);
+        CUDA_CHECK(cudaMemcpy(imgout->data, d_imgout, out_size, cudaMemcpyDeviceToHost));
+
+        cudaFree(d_imgin);
+        cudaFree(d_imgout);
     }
 }
 
