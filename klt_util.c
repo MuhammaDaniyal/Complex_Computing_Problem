@@ -1,11 +1,8 @@
-/*********************************************************************
- * klt_util.c
- *********************************************************************/
-
 /* Standard includes */
 #include <assert.h>
-#include <stdlib.h>  /* malloc() */
-#include <math.h>		/* fabs() */
+#include <stdlib.h>
+#include <math.h>
+#include <cuda_runtime.h>  // Add CUDA support
 
 /* Our includes */
 #include "base.h"
@@ -14,71 +11,81 @@
 #include "klt.h"
 #include "klt_util.h"
 
+// Flag to enable/disable pinned memory (can be toggled for testing)
+#define USE_PINNED_MEMORY 1
 
 /*********************************************************************/
-
-float _KLTComputeSmoothSigma(
-  KLT_TrackingContext tc)
+float _KLTComputeSmoothSigma(KLT_TrackingContext tc)
 {
   return (tc->smooth_sigma_fact * max(tc->window_width, tc->window_height));
 }
 
-
 /*********************************************************************
- * _KLTCreateFloatImage
+ * _KLTCreateFloatImage - Now with optional pinned memory support
  */
-
-_KLT_FloatImage _KLTCreateFloatImage(
-  int ncols,
-  int nrows)
+_KLT_FloatImage _KLTCreateFloatImage(int ncols, int nrows)
 {
   _KLT_FloatImage floatimg;
-  int nbytes = sizeof(_KLT_FloatImageRec) +
-    ncols * nrows * sizeof(float);
-
-  floatimg = (_KLT_FloatImage)  malloc(nbytes);
+  int nbytes = sizeof(_KLT_FloatImageRec) + ncols * nrows * sizeof(float);
+  
+#if USE_PINNED_MEMORY
+  // Allocate pinned (page-locked) memory for faster GPU transfers
+  cudaError_t err = cudaMallocHost((void**)&floatimg, nbytes);
+  if (err != cudaSuccess) {
+    fprintf(stderr, "Warning: cudaMallocHost failed (%s), falling back to malloc\n", cudaGetErrorString(err));
+    floatimg = (_KLT_FloatImage) malloc(nbytes);
+  }
+#else
+  // Original: Regular pageable memory
+  floatimg = (_KLT_FloatImage) malloc(nbytes);
+#endif
+  
   if (floatimg == NULL)
-    KLTError("(_KLTCreateFloatImage)  Out of memory");
+    KLTError("(_KLTCreateFloatImage) Out of memory");
+  
   floatimg->ncols = ncols;
   floatimg->nrows = nrows;
-  floatimg->data = (float *)  (floatimg + 1);
-
+  floatimg->data = (float *) (floatimg + 1);
+  
   return(floatimg);
 }
 
-
 /*********************************************************************
- * _KLTFreeFloatImage
+ * _KLTFreeFloatImage - Now handles both regular and pinned memory
  */
-
-void _KLTFreeFloatImage(
-  _KLT_FloatImage floatimg)
+void _KLTFreeFloatImage(_KLT_FloatImage floatimg)
 {
+#if USE_PINNED_MEMORY
+  // Check if this is pinned memory by trying CUDA free
+  cudaError_t err = cudaFreeHost(floatimg);
+  if (err != cudaSuccess) {
+    // If CUDA free failed, it's regular memory
+    free(floatimg);
+  }
+#else
   free(floatimg);
+#endif
 }
-
 
 /*********************************************************************
  * _KLTPrintSubFloatImage
  */
-
-void _KLTPrintSubFloatImage(
-  _KLT_FloatImage floatimg,
-  int x0, int y0,
-  int width, int height)
+void _KLTPrintSubFloatImage(_KLT_FloatImage floatimg,
+                            int x0, int y0,
+                            int width, int height)
 {
   int ncols = floatimg->ncols;
   int offset;
   int i, j;
-
+  
   assert(x0 >= 0);
   assert(y0 >= 0);
   assert(x0 + width <= ncols);
   assert(y0 + height <= floatimg->nrows);
-
+  
   fprintf(stderr, "\n");
-  for (j = 0 ; j < height ; j++)  {
-    for (i = 0 ; i < width ; i++)  {
+  for (j = 0 ; j < height ; j++) {
+    for (i = 0 ; i < width ; i++) {
       offset = (j+y0)*ncols + (i+x0);
       fprintf(stderr, "%6.2f ", *(floatimg->data + offset));
     }
@@ -86,15 +93,11 @@ void _KLTPrintSubFloatImage(
   }
   fprintf(stderr, "\n");
 }
-	
 
 /*********************************************************************
  * _KLTWriteFloatImageToPGM
  */
-
-void _KLTWriteFloatImageToPGM(
-  _KLT_FloatImage img,
-  char *filename)
+void _KLTWriteFloatImageToPGM(_KLT_FloatImage img, char *filename)
 {
   int npixs = img->ncols * img->nrows;
   float mmax = -999999.9f, mmin = 999999.9f;
@@ -102,40 +105,39 @@ void _KLTWriteFloatImageToPGM(
   float *ptr;
   uchar *byteimg, *ptrout;
   int i;
-
+  
   /* Calculate minimum and maximum values of float image */
   ptr = img->data;
-  for (i = 0 ; i < npixs ; i++)  {
+  for (i = 0 ; i < npixs ; i++) {
     mmax = max(mmax, *ptr);
     mmin = min(mmin, *ptr);
     ptr++;
   }
-	
+  
   /* Allocate memory to hold converted image */
   byteimg = (uchar *) malloc(npixs * sizeof(uchar));
-
+  
   /* Convert image from float to uchar */
   fact = 255.0f / (mmax-mmin);
   ptr = img->data;
   ptrout = byteimg;
-  for (i = 0 ; i < npixs ; i++)  {
+  for (i = 0 ; i < npixs ; i++) {
     *ptrout++ = (uchar) ((*ptr++ - mmin) * fact);
   }
-
+  
   /* Write uchar image to PGM */
   pgmWriteFile(filename, byteimg, img->ncols, img->nrows);
-
+  
   /* Free memory */
   free(byteimg);
 }
 
 /*********************************************************************
- * _KLTWriteFloatImageToPGM
+ * _KLTWriteAbsFloatImageToPGM
  */
-
-void _KLTWriteAbsFloatImageToPGM(
-  _KLT_FloatImage img,
-  char *filename,float scale)
+void _KLTWriteAbsFloatImageToPGM(_KLT_FloatImage img, 
+                                 char *filename, 
+                                 float scale)
 {
   int npixs = img->ncols * img->nrows;
   float fact;
@@ -143,23 +145,23 @@ void _KLTWriteAbsFloatImageToPGM(
   uchar *byteimg, *ptrout;
   int i;
   float tmp;
-	
+  
   /* Allocate memory to hold converted image */
   byteimg = (uchar *) malloc(npixs * sizeof(uchar));
-
+  
   /* Convert image from float to uchar */
   fact = 255.0f / scale;
   ptr = img->data;
   ptrout = byteimg;
-  for (i = 0 ; i < npixs ; i++)  {
+  for (i = 0 ; i < npixs ; i++) {
     tmp = (float) (fabs(*ptr++) * fact);
     if(tmp > 255.0) tmp = 255.0;
-    *ptrout++ =  (uchar) tmp;
+    *ptrout++ = (uchar) tmp;
   }
-
+  
   /* Write uchar image to PGM */
   pgmWriteFile(filename, byteimg, img->ncols, img->nrows);
-
+  
   /* Free memory */
   free(byteimg);
 }
