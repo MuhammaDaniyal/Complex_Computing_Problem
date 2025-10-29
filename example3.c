@@ -7,6 +7,7 @@ saved to a text file; each feature list is also written to a PPM file.
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include "pnmio.h"
 #include "klt.h"
 
@@ -15,10 +16,16 @@ saved to a text file; each feature list is also written to a PPM file.
 #ifdef WIN32
 int RunExample3()
 #else
-int main()
+int main(int argc, char *argv[])
 #endif
 {
   KLT_ResetPerformanceStats();
+
+  if(argc < 2)
+  {
+    printf("No arguments provided! Using default image set -> set1\n");
+    argv[1] = "set1";
+  }
   
   unsigned char *img1, *img2;
   char fnamein[200], fnameout[200], imgPath[100];
@@ -30,8 +37,10 @@ int main()
   int i;
 
   /* Choose image set */
-  const char *setName = "set2";   // set1, set2, set3, ...
+  char setName[100];   // set1, set2, set3, ...
+  strcpy(setName, argv[1]);
   sprintf(imgPath, "images/%s/", setName);
+  printf("--- Using image set: %s ---", setName);
 
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
