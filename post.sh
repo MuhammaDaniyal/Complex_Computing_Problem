@@ -21,9 +21,12 @@ if [ ! -d "images/$SET_NAME" ]; then
     echo "Using default set: $SET_NAME"
 fi
 
+# Number of files
+NUM_FILES=$(find "images/$SET_NAME" -type f -name 'img[0-9]*' | wc -l)
+
 printf "==========================\n"
 printf "|                         |\n"
-printf "|   Using dataset: %s    |\n", SET_NAME
+printf "|   Using dataset: $SET_NAME   |\n"
 printf "|                         |\n"
 printf "==========================\n"
 
@@ -45,7 +48,7 @@ fi
 echo "=========================="
 echo "🚀 Running example3..."
 echo "=========================="
-./example3 "$SET_NAME"
+./example3 "$SET_NAME" "$NUM_FILES"
 
 if [ ! -f gmon.out ]; then
     echo "⚠️ gmon.out not found (profiling might not have generated output)."
