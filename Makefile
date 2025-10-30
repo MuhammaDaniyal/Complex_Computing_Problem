@@ -60,5 +60,5 @@ depend:
 
 clean:
 	rm -f *.o *.a $(EXAMPLES) *.tar *.tar.gz libklt.a \
-	      feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
+	      images/set*/feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
 	rm -f $(EXEC) $(OBJS) *~ gmon.out
