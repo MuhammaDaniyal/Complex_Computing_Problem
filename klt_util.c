@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
-#include <cuda_runtime.h>  // Add CUDA support
+#include <cuda_runtime.h>
 
 /* Our includes */
 #include "base.h"
@@ -11,8 +11,6 @@
 #include "klt.h"
 #include "klt_util.h"
 
-// Flag to enable/disable pinned memory (can be toggled for testing)
-#define USE_PINNED_MEMORY 1
 
 /*********************************************************************/
 float _KLTComputeSmoothSigma(KLT_TrackingContext tc)
@@ -28,17 +26,12 @@ _KLT_FloatImage _KLTCreateFloatImage(int ncols, int nrows)
   _KLT_FloatImage floatimg;
   int nbytes = sizeof(_KLT_FloatImageRec) + ncols * nrows * sizeof(float);
   
-#if USE_PINNED_MEMORY
-  // Allocate pinned (page-locked) memory for faster GPU transfers
+   //Allocate pinned (page-locked) memory for faster GPU transfers
   cudaError_t err = cudaMallocHost((void**)&floatimg, nbytes);
   if (err != cudaSuccess) {
     fprintf(stderr, "Warning: cudaMallocHost failed (%s), falling back to malloc\n", cudaGetErrorString(err));
     floatimg = (_KLT_FloatImage) malloc(nbytes);
   }
-#else
-  // Original: Regular pageable memory
-  floatimg = (_KLT_FloatImage) malloc(nbytes);
-#endif
   
   if (floatimg == NULL)
     KLTError("(_KLTCreateFloatImage) Out of memory");
@@ -55,16 +48,11 @@ _KLT_FloatImage _KLTCreateFloatImage(int ncols, int nrows)
  */
 void _KLTFreeFloatImage(_KLT_FloatImage floatimg)
 {
-#if USE_PINNED_MEMORY
-  // Check if this is pinned memory by trying CUDA free
   cudaError_t err = cudaFreeHost(floatimg);
   if (err != cudaSuccess) {
     // If CUDA free failed, it's regular memory
     free(floatimg);
   }
-#else
-  free(floatimg);
-#endif
 }
 
 /*********************************************************************
