@@ -8,6 +8,10 @@
 #include "convolve.h"
 #include "klt_util.h"
 
+#define TILE_WIDTH 32
+#define TILE_HEIGHT 8 // Can be changed for performance tuning
+#define MAX_RADIUS 35 // Half of maximum kernel size (71)
+
 // Fixed CUDA error checking
 static void checkCudaError(cudaError_t err, const char *file, int line) {
     if (err != cudaSuccess) {
@@ -21,94 +25,100 @@ static void checkCudaError(cudaError_t err, const char *file, int line) {
 __constant__ float device_kernel[71];
 __constant__ float device_kernel_ver[71];
 
-__global__ void _convolveImageVertKernel(
+__global__ void _convolveImageVertSharedKernel(
     int radius, 
     int width,
-    float *imgin,      
-    float *imgout,     
+    const float *imgin,
+    float *imgout,
     int ncols,
     int nrows)
 {
-    // Calculate which pixel (row, col) this thread is responsible for
-    int col_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int row_idx = blockIdx.y * blockDim.y + threadIdx.y;
-    
-    // Boundary check (MUST use OR, not AND)
-    if (col_idx >= ncols || row_idx >= nrows)
-        return;
-    
-    // Calculate linear index for this pixel
-    int idx = row_idx * ncols + col_idx;
-    
-    if (row_idx < radius) {
-        imgout[idx] = 0.0f;
-        return;  // Done with this thread
-    }
-    
-    if (row_idx >= nrows - radius) {
-        imgout[idx] = 0.0f;
-        return;  // Done with this thread
-    }
-    
-    
-    float sum = 0.0f;
-    int x = 0;
-    
-    // Start position: row_idx - radius, same column
-    int start_idx = (row_idx - radius) * ncols + col_idx;
-    
-   for (int k = 0; k < width; k++) {
+    extern __shared__ float tile[]; // shared memory for vertical strip
 
-        int current_idx = start_idx + k * ncols;  // Move down one row each iteration
-   }
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int col = blockIdx.x * TILE_WIDTH + tx;
+    int row = blockIdx.y * TILE_HEIGHT + ty;
 
-    for (int k = width - 1; k >= 0; k--) {
-        int current_row = row_idx - radius + x;
-        int current_idx = current_row * ncols + col_idx;
-        sum += imgin[current_idx] * device_kernel_ver[k];
-        x++;
+    if (col >= ncols) return;
+
+    // Each column has its own vertical slice in shared memory
+    int tile_pitch = TILE_HEIGHT + 2 * radius;
+    int tile_offset = tx * tile_pitch;
+
+    // Global row of first shared pixel (includes top halo)
+    int base_row = blockIdx.y * TILE_HEIGHT - radius;
+
+    // Load full column (main region + halos) into shared memory
+    for (int s = ty; s < tile_pitch; s += blockDim.y) {
+        int global_row = base_row + s;
+        float val = 0.0f;
+        if (global_row >= 0 && global_row < nrows) {
+            val = imgin[global_row * ncols + col];
+        }
+        tile[tile_offset + s] = val;
     }
-    
-    // Store result
-    imgout[idx] = sum;
+
+    __syncthreads();
+
+    // Compute convolution for valid region
+    if (row < nrows) {
+        int idx = row * ncols + col;
+        // Border pixels ? zero (same as CPU)
+        if (row < radius || row >= nrows - radius) {
+            imgout[idx] = 0.0f;
+            return;
+        }
+
+        float sum = 0.0f;
+        int local_row = ty + radius;
+        // Apply kernel in reverse order (to match CPU loop)
+        for (int k = 0; k < width; ++k) {
+            sum += tile[tile_offset + local_row - radius + k] * device_kernel_ver[width - 1 - k];
+        }
+
+        imgout[idx] = sum;
+    }
 }
+
 
 extern "C" {
     void _convolveImageVertUsingGPU(_KLT_FloatImage imgin, int width, float* kerneldata, _KLT_FloatImage imgout) {
         int radius = width / 2;
         int ncols = imgin->ncols, nrows = imgin->nrows;
-       
+    
         assert(width % 2 == 1);
         assert(imgin != imgout);
         assert(imgout->ncols >= imgin->ncols);
         assert(imgout->nrows >= imgin->nrows);
-
-        float *d_imgin, *d_imgout, *d_kernel;
-        int img_size = sizeof(float) * ncols * nrows;
-        int out_size = sizeof(float) * imgout->ncols * imgout->nrows;
-
+    
+        float *d_imgin, *d_imgout;
+        size_t img_size = sizeof(float) * ncols * nrows;
+    
         CUDA_CHECK(cudaMalloc(&d_imgin, img_size));
-        CUDA_CHECK(cudaMalloc(&d_imgout, out_size));
-        //CUDA_CHECK(cudaMalloc(&d_kernel, sizeof(float)*71));
-
+        CUDA_CHECK(cudaMalloc(&d_imgout, img_size));
+    
         CUDA_CHECK(cudaMemcpy(d_imgin, imgin->data, img_size, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_imgout, imgout->data, out_size, cudaMemcpyHostToDevice));
-        //CUDA_CHECK(cudaMemcpy(d_kernel, kerneldata, sizeof(float)*71, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpyToSymbol(device_kernel_ver, kerneldata, sizeof(float)*71));
-
-        dim3 block(32, 32);
-        dim3 grid((ncols + block.x - 1) / block.x, (nrows + block.y - 1) / block.y);
-
-        _convolveImageVertKernel<<<grid, block>>>(
-             radius,width, d_imgin, d_imgout,ncols, nrows
-        );
-
+        CUDA_CHECK(cudaMemcpyToSymbol(device_kernel_ver, kerneldata, sizeof(float) * width));
+    
+        dim3 block(TILE_WIDTH, TILE_HEIGHT);
+        dim3 grid((ncols + TILE_WIDTH - 1) / TILE_WIDTH,
+                  (nrows + TILE_HEIGHT - 1) / TILE_HEIGHT);
+    
+        int shared_mem_size = TILE_WIDTH * (TILE_HEIGHT + 2 * radius) * sizeof(float);
+    
+        _convolveImageVertSharedKernel<<<grid, block, shared_mem_size>>>(
+            radius, width, d_imgin, d_imgout, ncols, nrows);
+    
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            fprintf(stderr, "Kernel launch error: %s\n", cudaGetErrorString(err));
+    
         CUDA_CHECK(cudaDeviceSynchronize());
-        CUDA_CHECK(cudaMemcpy(imgout->data, d_imgout, out_size, cudaMemcpyDeviceToHost));
-
+        CUDA_CHECK(cudaMemcpy(imgout->data, d_imgout, img_size, cudaMemcpyDeviceToHost));
+    
         cudaFree(d_imgin);
         cudaFree(d_imgout);
-        //cudaFree(d_kernel);
     }
 }
 
