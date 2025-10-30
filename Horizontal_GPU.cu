@@ -19,36 +19,60 @@ static void checkCudaError(cudaError_t err, const char *file, int line) {
 
 #define CUDA_CHECK(call) checkCudaError(call, __FILE__, __LINE__)
 __constant__ float device_kernel[71];
+__constant__ float device_kernel_ver[71];
 
 __global__ void _convolveImageVertKernel(
-    int radius,
+    int radius, 
     int width,
-    float *imgin,
-    float *imgout,
+    float *imgin,      
+    float *imgout,     
     int ncols,
     int nrows)
 {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-   
-    if (col >= ncols || row >= nrows) return;
-   
-    int idx = row * ncols + col;
-   
-    if (row < radius || row >= nrows - radius) {
-        imgout[idx] = 0.0f;
+    // Calculate which pixel (row, col) this thread is responsible for
+    int col_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int row_idx = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    // Boundary check (MUST use OR, not AND)
+    if (col_idx >= ncols || row_idx >= nrows)
         return;
+    
+    // Calculate linear index for this pixel
+    int idx = row_idx * ncols + col_idx;
+    
+    if (row_idx < radius) {
+        imgout[idx] = 0.0f;
+        return;  // Done with this thread
     }
-
+    
+    if (row_idx >= nrows - radius) {
+        imgout[idx] = 0.0f;
+        return;  // Done with this thread
+    }
+    
+    
     float sum = 0.0f;
-    for (int k = 0; k < width; k++) {
-        int r = row - radius + k;
-        int src_idx = r * ncols + col;
-        sum += imgin[src_idx] * device_kernel[k];  
+    int x = 0;
+    
+    // Start position: row_idx - radius, same column
+    int start_idx = (row_idx - radius) * ncols + col_idx;
+    
+   for (int k = 0; k < width; k++) {
+
+        int current_idx = start_idx + k * ncols;  // Move down one row each iteration
+   }
+
+    for (int k = width - 1; k >= 0; k--) {
+        int current_row = row_idx - radius + x;
+        int current_idx = current_row * ncols + col_idx;
+        sum += imgin[current_idx] * device_kernel_ver[k];
+        x++;
     }
-   
+    
+    // Store result
     imgout[idx] = sum;
 }
+
 extern "C" {
     void _convolveImageVertUsingGPU(_KLT_FloatImage imgin, int width, float* kerneldata, _KLT_FloatImage imgout) {
         int radius = width / 2;
@@ -59,23 +83,24 @@ extern "C" {
         assert(imgout->ncols >= imgin->ncols);
         assert(imgout->nrows >= imgin->nrows);
 
-        float *d_imgin, *d_imgout;
+        float *d_imgin, *d_imgout, *d_kernel;
         int img_size = sizeof(float) * ncols * nrows;
         int out_size = sizeof(float) * imgout->ncols * imgout->nrows;
 
         CUDA_CHECK(cudaMalloc(&d_imgin, img_size));
         CUDA_CHECK(cudaMalloc(&d_imgout, out_size));
+        //CUDA_CHECK(cudaMalloc(&d_kernel, sizeof(float)*71));
 
         CUDA_CHECK(cudaMemcpy(d_imgin, imgin->data, img_size, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_imgout, imgout->data, out_size, cudaMemcpyHostToDevice));
-        
-        CUDA_CHECK(cudaMemcpyToSymbol(device_kernel, kerneldata, sizeof(float)*71));
+        //CUDA_CHECK(cudaMemcpy(d_kernel, kerneldata, sizeof(float)*71, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpyToSymbol(device_kernel_ver, kerneldata, sizeof(float)*71));
 
         dim3 block(32, 32);
         dim3 grid((ncols + block.x - 1) / block.x, (nrows + block.y - 1) / block.y);
 
         _convolveImageVertKernel<<<grid, block>>>(
-            radius, width, d_imgin, d_imgout, ncols, nrows
+             radius,width, d_imgin, d_imgout,ncols, nrows
         );
 
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -83,6 +108,7 @@ extern "C" {
 
         cudaFree(d_imgin);
         cudaFree(d_imgout);
+        //cudaFree(d_kernel);
     }
 }
 
