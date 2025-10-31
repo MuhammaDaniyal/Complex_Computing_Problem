@@ -21,8 +21,9 @@ static double total_gpu_compute_time = 0.0;
 static double total_cpu_compute_time = 0.0;
 static double total_memory_transfer_time = 0.0;
 static int total_convolution_calls = 0;
-static int last_image_width = 0;
-static int last_image_height = 0;
+static int first_image_width = 0;
+static int first_image_height = 0;
+static int image_size_recorded = 0;
 
 
 typedef struct  {
@@ -151,8 +152,12 @@ static void _convolveImageHoriz(
   _KLT_FloatImage imgout)
 {
     total_convolution_calls++;
-    last_image_width = imgin->ncols;
-    last_image_height = imgin->nrows;
+    if (!image_size_recorded) 
+    {
+        first_image_width = imgin->ncols;
+        first_image_height = imgin->nrows;
+        image_size_recorded = 1;
+    }
     
     // ====================== GPU TIMING START ======================
     cudaEvent_t startGPU, stopGPU;
@@ -266,8 +271,12 @@ static void _convolveImageVert(
   _KLT_FloatImage imgout)
 {
     total_convolution_calls++;
-    last_image_width = imgin->ncols;
-    last_image_height = imgin->nrows;
+    if (!image_size_recorded) 
+    {
+        first_image_width = imgin->ncols;
+        first_image_height = imgin->nrows;
+        image_size_recorded = 1;
+    }
     
     // ====================== GPU TIMING START ======================
     cudaEvent_t startGPU, stopGPU;
@@ -468,7 +477,7 @@ void KLT_PrintPerformanceStats(void)
     printf("-----------------------------------------------------------\n");
     printf("              PERFORMANCE SUMMARY (D3 Report)              \n");
     printf("-----------------------------------------------------------\n");
-    printf("Image Size:                    %d x %d\n", last_image_width, last_image_height);
+    printf("First Image Size:              %d x %d\n", first_image_width, first_image_height);
     printf("Total Convolution Calls:       %d\n", total_convolution_calls);
     printf("-----------------------------------------------------------\n");
     printf("Total GPU Compute Time:        %.2f ms\n", total_gpu_compute_time);
