@@ -28,6 +28,7 @@ int main(int argc, char *argv[])
     argv[1] = "set1";
   }
   nFrames = atoi(argv[2]);
+  nFrames = 10;  // Currently keeping same number of frames for all
   
   unsigned char *img1, *img2;
   char fnamein[200], fnameout[200], imgPath[100];
@@ -90,3 +91,4 @@ int main(int argc, char *argv[])
 
   return 0;
 }
+
