@@ -9,7 +9,7 @@
 #include "klt_util.h"
 
 #define TILE_WIDTH 32
-#define TILE_HEIGHT 8 // Can be changed for performance tuning
+#define TILE_HEIGHT 32 // Can be changed for performance tuning
 #define MAX_RADIUS 35 // Half of maximum kernel size (71)
 
 // Fixed CUDA error checking
@@ -163,7 +163,6 @@ extern "C" {
         CUDA_CHECK(cudaMalloc((void**)&ptrout_device, size_of_imgout));
 
         CUDA_CHECK(cudaMemcpy(ptrrow_device, imgin->data, size_of_imgin, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(ptrout_device, imgout->data, size_of_imgout, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpyToSymbol(device_kernel, kerneldata, sizeof(float)*71));    //copy to constant memory
 
         dim3 block(32, 32, 1);
