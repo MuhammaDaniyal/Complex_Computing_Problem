@@ -20,19 +20,21 @@ int main(int argc, char *argv[])
 #endif
 {
   KLT_ResetPerformanceStats();
+  int nFrames = 10;
 
-  if(argc < 2)
+  if(argc < 3)
   {
     printf("No arguments provided! Using default image set -> set1\n");
     argv[1] = "set1";
   }
+  nFrames = atoi(argv[2]);
   
   unsigned char *img1, *img2;
   char fnamein[200], fnameout[200], imgPath[100];
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 150, nFrames = 10;
+  int nFeatures = 150;
   int ncols, nrows;
   int i;
 
@@ -40,7 +42,7 @@ int main(int argc, char *argv[])
   char setName[100];   // set1, set2, set3, ...
   strcpy(setName, argv[1]);
   sprintf(imgPath, "images/%s/", setName);
-  printf("--- Using image set: %s ---", setName);
+  printf("\n--- Using image set: %s ---", setName);
 
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
