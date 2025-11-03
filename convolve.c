@@ -176,8 +176,7 @@ static void _convolveImageHoriz(
     
     total_gpu_compute_time += gpuTime;
     
-    printf("\n[GPU HORIZ] Time: %.3f ms (Image: %dx%d)\n", 
-           gpuTime, imgin->ncols, imgin->nrows);
+    printf("\n[GPU HORIZ] Time: %.3f ms (Image: %dx%d)\n", gpuTime, imgin->ncols, imgin->nrows);
 
     cudaEventDestroy(startGPU);
     cudaEventDestroy(stopGPU);
@@ -228,8 +227,7 @@ static void _convolveImageHoriz(
     
     total_cpu_compute_time += cpu_time_ms;
     
-    printf("[CPU HORIZ] Time: %.3f ms | Speedup: %.2fx\n", 
-           cpu_time_ms, cpu_time_ms / gpuTime);
+    printf("[CPU HORIZ] Time: %.3f ms | Speedup: %.2fx\n", cpu_time_ms, cpu_time_ms / gpuTime);
     // ====================== CPU TIMING END ========================
 
 
@@ -295,8 +293,7 @@ static void _convolveImageVert(
     
     total_gpu_compute_time += gpuTime;
     
-    printf("\n[GPU VERT] Time: %.3f ms (Image: %dx%d)\n", 
-           gpuTime, imgin->ncols, imgin->nrows);
+    printf("\n[GPU VERT] Time: %.3f ms (Image: %dx%d)\n", gpuTime, imgin->ncols, imgin->nrows);
 
     cudaEventDestroy(startGPU);
     cudaEventDestroy(stopGPU);
@@ -361,8 +358,7 @@ static void _convolveImageVert(
     
     total_cpu_compute_time += cpu_time_ms;
     
-    printf("[CPU VERT] Time: %.3f ms | Speedup: %.2fx\n", 
-           cpu_time_ms, cpu_time_ms / gpuTime);
+    printf("[CPU VERT] Time: %.3f ms | Speedup: %.2fx\n", cpu_time_ms, cpu_time_ms / gpuTime);
     // ====================== CPU TIMING END ========================
 
 
@@ -483,12 +479,9 @@ void KLT_PrintPerformanceStats(void)
     printf("Total GPU Compute Time:        %.2f ms\n", total_gpu_compute_time);
     printf("Total CPU Compute Time:        %.2f ms\n", total_cpu_compute_time);
     printf("-----------------------------------------------------------\n");
-    printf("Overall Speedup (GPU vs CPU):  %.2fx\n", 
-           total_cpu_compute_time / total_gpu_compute_time);
-    printf("Time Saved:                    %.2f ms\n", 
-           total_cpu_compute_time - total_gpu_compute_time);
-    printf("Percentage GPU is Faster:      %.1f%%\n", 
-           ((total_cpu_compute_time - total_gpu_compute_time) / total_cpu_compute_time) * 100.0);
+    printf("Overall Speedup (GPU vs CPU):  %.2fx\n", total_cpu_compute_time / total_gpu_compute_time);
+    printf("Time Saved:                    %.2f ms\n", total_cpu_compute_time - total_gpu_compute_time);
+    printf("Percentage GPU is Faster:      %.1f%%\n", ((total_cpu_compute_time - total_gpu_compute_time) / total_cpu_compute_time) * 100.0);
     printf("-----------------------------------------------------------\n");
     printf("\n");
 }

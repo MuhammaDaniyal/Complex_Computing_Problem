@@ -8,8 +8,8 @@ FLAG1 = -DNDEBUG
 # FLAG2 = -DKLT_USE_QSORT   # Uncomment if you want to use standard qsort
 CFLAGS = $(FLAG1) $(FLAG2) -pg
 
-# CUDA flags
-CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart
+# CUDA flags... Limit to 48 registers per thread
+CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart -maxrregcount=48
 
 ######################################################################
 # Source files

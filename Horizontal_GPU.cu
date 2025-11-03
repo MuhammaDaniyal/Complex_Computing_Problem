@@ -9,7 +9,7 @@
 #include "klt_util.h"
 
 #define TILE_WIDTH 32
-#define TILE_HEIGHT 32 // Can be changed for performance tuning
+#define TILE_HEIGHT 16 // Can be changed for performance tuning
 #define MAX_RADIUS 35 // Half of maximum kernel size (71)
 
 // Fixed CUDA error checking
