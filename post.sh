@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e  # Stop if any command fails
 
-# Capture argument
 NUM="$1"
 
 if [ -z "$NUM" ]; then
@@ -9,10 +8,8 @@ if [ -z "$NUM" ]; then
     NUM=1
 fi
 
-# Construct dataset name
 SET_NAME="set${NUM}"
 
-# Check if folder exists
 if [ ! -d "images/$SET_NAME" ]; then
     echo "❌ Error: Folder images/$SET_NAME does not exist!"
     echo "Available sets:"
@@ -21,7 +18,6 @@ if [ ! -d "images/$SET_NAME" ]; then
     echo "Using default set: $SET_NAME"
 fi
 
-# Number of files
 NUM_FILES=$(find "images/$SET_NAME" -type f -name 'img[0-9]*' | wc -l)
 
 printf "==========================\n"
@@ -36,20 +32,17 @@ echo "=========================="
 make clean
 
 echo "=========================="
-echo "🧱 Building project..."
+echo "🧱 Building project (CUDA + OpenACC)..."
 echo "=========================="
-make example3
+make all
 
-if [ ! -f ./example3 ]; then
-    echo "❌ example3 build failed!"
-    exit 1
-fi
-
+# Run the example (already linked with OpenACC-enabled library)
 echo "=========================="
 echo "🚀 Running example3..."
 echo "=========================="
 ./example3 "$SET_NAME" "$NUM_FILES"
 
+# Profile example3 using gprof
 if [ ! -f gmon.out ]; then
     echo "⚠️ gmon.out not found (profiling might not have generated output)."
 else
