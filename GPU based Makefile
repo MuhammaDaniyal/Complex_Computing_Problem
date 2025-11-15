@@ -2,7 +2,7 @@
 # Compiler selection
 CC = nvcc
 
-# OpenACC compiler for .c files with directives
+# OpenACC compiler for .c files with directives (NVIDIA HPC SDK)
 ACC_CC = nvc
 
 ######################################################################
@@ -14,7 +14,7 @@ CFLAGS = $(FLAG1) $(FLAG2) -pg
 # CUDA flags
 CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart -maxrregcount=48
 
-# OpenACC flags
+# OpenACC flags for nvc
 ACCFLAGS = -acc -Minfo=accel -fast
 
 ######################################################################
@@ -24,13 +24,13 @@ ARCH_C = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
           storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
 ARCH_CU = Horizontal_GPU.cu
 
-LIB = -L/usr/local/lib -L/usr/lib
+LIB = -L/usr/local/lib -L/usr/lib -L/usr/local/cuda/lib64
 
 ######################################################################
 # Compile rules
 .SUFFIXES: .c .o .cu
 
-# Normal C compilation (for CPU/CUDA)
+# Normal C compilation for CPU/CUDA
 .c.o:
 	@echo "Compiling $< to $@ (CPU/CUDA)..."
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -49,15 +49,13 @@ convolve_acc.o: convolve.c
 	@if [ -f convolve_acc.o ]; then echo "convolve_acc.o created successfully"; else echo "Failed to create convolve_acc.o"; exit 1; fi
 
 ######################################################################
-# Build library
-# Original library (CPU/CUDA)
+# Build libraries
 libklt.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
 	@echo "Creating libklt.a with object files..."
 	rm -f libklt.a
 	ar ruv libklt.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
 	@echo "Library libklt.a created successfully."
 
-# OpenACC-enabled library (replace convolve.o with convolve_acc.o)
 libklt_acc.a: convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
 	@echo "Creating OpenACC-enabled libklt_acc.a..."
 	rm -f libklt_acc.a
@@ -65,7 +63,7 @@ libklt_acc.a: convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:
 	@echo "Library libklt_acc.a created successfully."
 
 ######################################################################
-# Build all examples (linking OpenACC-enabled library)
+# Build examples linking OpenACC-enabled library
 all: libklt.a libklt_acc.a $(EXAMPLES)
 
 $(EXAMPLES): %: %.c libklt_acc.a
