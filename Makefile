@@ -1,18 +1,16 @@
 ######################################################################
 # Compiler selection
-CC = nvcc
+NVCC = nvcc
+ACC_CC = nvc
 
 ######################################################################
-# Flags and definitions
-FLAG1 = -DNDEBUG
-# FLAG2 = -DKLT_USE_QSORT
-CFLAGS = $(FLAG1) $(FLAG2) -pg
-
-# CUDA flags
+# Flags
+CFLAGS = -DNDEBUG -pg
+NVCCFLAGS = -std=c++11 -O3 -arch=sm_75
 CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart -maxrregcount=48
+ACCFLAGS = -acc -Minfo=accel -fast
 
-# OpenACC flags
-ACCFLAGS = -fopenacc -O2
+LIBS = -L/usr/local/lib -L/usr/lib -lm -lcudart
 
 ######################################################################
 # Source files
@@ -21,53 +19,59 @@ ARCH_C = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
           storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
 ARCH_CU = Horizontal_GPU.cu
 
-LIB = -L/usr/local/lib -L/usr/lib
+######################################################################
+# Suffixes
+.SUFFIXES: .c .o .cu
 
 ######################################################################
 # Compile rules
-.SUFFIXES: .c .o .cu
 
-# Normal C compilation (for CPU/CUDA)
+# Normal C compilation (CPU-side)
 .c.o:
-	@echo "Compiling $< to $@ (CPU/CUDA)..."
-	$(CC) -c $(CFLAGS) $< -o $@
+	@echo "Compiling $< to $@ (CPU)..."
+	$(NVCC) -c $(CFLAGS) $< -o $@
 	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
 
 # CUDA compilation
 %.o: %.cu
-	@echo "Compiling CUDA source $< to $@..."
-	nvcc -c -O3 $(CUFLAGS) $< -o $@
+	@echo "Compiling CUDA $<..."
+	$(NVCC) $(NVCCFLAGS) $(CUFLAGS) -c $< -o $@
 	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
 
 # OpenACC compilation for files with directives (e.g., convolve.c)
 convolve_acc.o: convolve.c
-	@echo "Compiling convolve.c with OpenACC using nvcc..."
-	nvcc -c -O2 -Xcompiler -fopenacc -I/usr/local/cuda/include convolve.c -o convolve_acc.o
+	@echo "Compiling convolve.c with OpenACC using nvc..."
+	$(ACC_CC) $(ACCFLAGS) -fPIC -c convolve.c -o convolve_acc.o
 	@if [ -f convolve_acc.o ]; then echo "convolve_acc.o created successfully"; else echo "Failed to create convolve_acc.o"; exit 1; fi
 
+
+
+
 ######################################################################
-# Build library
-# Original library (CPU/CUDA)
-libklt.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Creating libklt.a with object files..."
+# Build libraries
+
+# CPU/CUDA library (all except convolve)
+libklt.a: $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
+	@echo "Creating libklt.a..."
 	rm -f libklt.a
-	ar ruv libklt.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Library libklt.a created successfully."
+	ar ruv libklt.a $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
+	@echo "libklt.a created."
 
 # OpenACC-enabled library (replace convolve.o with convolve_acc.o)
 libklt_acc.a: convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
-	@echo "Creating OpenACC-enabled libklt_acc.a..."
+	@echo "Creating libklt_acc.a..."
 	rm -f libklt_acc.a
 	ar ruv libklt_acc.a convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
-	@echo "Library libklt_acc.a created successfully."
+	@echo "libklt_acc.a created."
 
 ######################################################################
-# Build all examples (linking OpenACC-enabled library)
+# Build example executable (link CUDA + OpenACC)
 all: libklt.a libklt_acc.a $(EXAMPLES)
 
+# Build example executable (link CUDA + OpenACC)
 $(EXAMPLES): %: %.c libklt_acc.a
-	@echo "Building $@ with OpenACC-enabled library..."
-	nvcc -O3 -Xcompiler -fopenacc $(CFLAGS) -o $@ $@.c -L. -lklt_acc $(LIB) -lm -lcudart
+	@echo "Building $@ with NVCC + OpenACC library..."
+	$(NVCC) $(NVCCFLAGS) $(CFLAGS) $@.c -L. -lklt_acc $(LIBS) -no-pie -o $@
 	@if [ -f $@ ]; then echo "$@ built successfully"; else echo "Failed to build $@"; exit 1; fi
 
 ######################################################################
@@ -78,4 +82,4 @@ depend:
 clean:
 	rm -f *.o *.a $(EXAMPLES) *.tar *.tar.gz libklt.a libklt_acc.a \
 	      images/set*/feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
-	rm -f $(EXEC) $(OBJS) *~ gmon.out
+	rm -f *~ gmon.out
