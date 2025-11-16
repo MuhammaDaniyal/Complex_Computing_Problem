@@ -15,7 +15,10 @@ CFLAGS = $(FLAG1) $(FLAG2) -pg
 CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart -maxrregcount=48
 
 # OpenACC flags for nvc
+#Old ones
 ACCFLAGS = -acc -Minfo=accel -fast
+#Optimized ones
+#ACCFLAGS = -acc -ta=tesla:cc86,pinned -Minfo=accel -fast -cuda
 
 ######################################################################
 # Source files

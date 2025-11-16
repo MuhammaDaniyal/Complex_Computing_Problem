@@ -8,6 +8,10 @@
 #include "klt.h"
 #include "klt_util.h"
 
+void KLT_CleanupOpenACC(void);
+void _KLT_InitOpenACCData();
+void _KLT_CleanupOpenACCData();
+
 void _KLTToFloatImage(
   KLT_PixelType *img,
   int ncols, int nrows,
@@ -29,7 +33,7 @@ void _KLTComputeSmoothedImage(
   float sigma,
   _KLT_FloatImage smooth);
 
-void KLT_PrintPerformanceStats(void);
+void KLT_PrintPerformanceStats(double gpu_time);
 void KLT_ResetPerformanceStats(void);
 
 #endif
