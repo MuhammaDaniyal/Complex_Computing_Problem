@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
-#include <cuda_runtime.h>
+//#include <cuda_runtime.h>
 
 /* Our includes */
 #include "base.h"
@@ -27,11 +27,11 @@ _KLT_FloatImage _KLTCreateFloatImage(int ncols, int nrows)
   int nbytes = sizeof(_KLT_FloatImageRec) + ncols * nrows * sizeof(float);
   
    //Allocate pinned (page-locked) memory for faster GPU transfers
-  cudaError_t err = cudaMallocHost((void**)&floatimg, nbytes);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "Warning: cudaMallocHost failed (%s), falling back to malloc\n", cudaGetErrorString(err));
+  //cudaError_t err = cudaMallocHost((void**)&floatimg, nbytes);
+  //if (err != cudaSuccess) {
+    //fprintf(stderr, "Warning: cudaMallocHost failed (%s), falling back to malloc\n", cudaGetErrorString(err));
     floatimg = (_KLT_FloatImage) malloc(nbytes);
-  }
+  //}
   
   if (floatimg == NULL)
     KLTError("(_KLTCreateFloatImage) Out of memory");
@@ -48,11 +48,11 @@ _KLT_FloatImage _KLTCreateFloatImage(int ncols, int nrows)
  */
 void _KLTFreeFloatImage(_KLT_FloatImage floatimg)
 {
-  cudaError_t err = cudaFreeHost(floatimg);
-  if (err != cudaSuccess) {
+  //cudaError_t err = cudaFreeHost(floatimg);
+  //if (err != cudaSuccess) {
     // If CUDA free failed, it's regular memory
     free(floatimg);
-  }
+  //}
 }
 
 /*********************************************************************
