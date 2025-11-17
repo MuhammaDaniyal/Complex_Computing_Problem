@@ -1,85 +1,109 @@
 ######################################################################
-# Compiler selection
-CC = nvcc
+# Compilers (NVIDIA HPC SDK)
+######################################################################
 
-# OpenACC compiler for .c files with directives (NVIDIA HPC SDK)
-ACC_CC = nvc
+ACC_CC   = nvc          # OpenACC C compiler
+CUDA_CC  = nvc++        # CUDA/C++ compiler (replaces nvcc)
 
 ######################################################################
-# Flags and definitions
-FLAG1 = -DNDEBUG
-# FLAG2 = -DKLT_USE_QSORT
-CFLAGS = $(FLAG1) $(FLAG2) -pg
+# Flags
+######################################################################
 
-# CUDA flags
-CUFLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcudart -maxrregcount=48
+FLAG1   = -DNDEBUG
+CFLAGS  = $(FLAG1) $(FLAG2) -pg
 
-# OpenACC flags for nvc
-#Old ones
+# CUDA flags for nvc++ (correct form — nvc++ does NOT support -maxrregcount)
+CUFLAGS = -cuda -O3 -gpu=maxregcount:48
+
+# OpenACC flags
 ACCFLAGS = -acc -Minfo=accel -fast
-#Optimized ones
-#ACCFLAGS = -acc -ta=tesla:cc86,pinned -Minfo=accel -fast -cuda
 
 ######################################################################
 # Source files
+######################################################################
+
 EXAMPLES = example3
+
+# All C files
 ARCH_C = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
-          storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
+         storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
+
+# CUDA files
 ARCH_CU = Horizontal_GPU.cu
 
-LIB = -L/usr/local/lib -L/usr/lib -L/usr/local/cuda/lib64
+# Which C files contain OpenACC?
+ACC_SOURCES = convolve.c
+
+# Regular CPU-only C files
+CPU_SOURCES = $(filter-out $(ACC_SOURCES),$(ARCH_C))
+
+# No need for CUDA toolkit paths — HPC SDK provides all required libs internally
+LIB = -L/usr/local/lib -L/usr/lib
 
 ######################################################################
-# Compile rules
+# Rules
+######################################################################
+
 .SUFFIXES: .c .o .cu
 
-# Normal C compilation for CPU/CUDA
-.c.o:
-	@echo "Compiling $< to $@ (CPU/CUDA)..."
-	$(CC) -c $(CFLAGS) $< -o $@
-	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
+######################################################################
+# Compile C files without OpenACC
+######################################################################
+$(CPU_SOURCES:.c=.o): %.o: %.c
+	@echo "Compiling $< (C, CPU only)..."
+	$(ACC_CC) -c $(CFLAGS) $< -o $@
+	@if [ -f $@ ]; then echo "$@ created"; else echo "Failed: $@"; exit 1; fi
 
-# CUDA compilation
+######################################################################
+# Compile OpenACC C files
+######################################################################
+$(ACC_SOURCES:.c=.o): %.o: %.c
+	@echo "Compiling $< with OpenACC..."
+	$(ACC_CC) $(ACCFLAGS) -c $< -o $@
+	@if [ -f $@ ]; then echo "$@ created"; else exit 1; fi
+
+######################################################################
+# CUDA compilation using nvc++
+######################################################################
 %.o: %.cu
-	@echo "Compiling CUDA source $< to $@..."
-	$(CC) -c -O3 $(CUFLAGS) $< -o $@
-	@if [ -f $@ ]; then echo "$@ created successfully"; else echo "Failed to create $@"; exit 1; fi
-
-# OpenACC compilation for files with directives (e.g., convolve.c)
-convolve_acc.o: convolve.c
-	@echo "Compiling convolve.c with OpenACC using nvc..."
-	$(ACC_CC) $(ACCFLAGS) -c convolve.c -o convolve_acc.o
-	@if [ -f convolve_acc.o ]; then echo "convolve_acc.o created successfully"; else echo "Failed to create convolve_acc.o"; exit 1; fi
+	@echo "Compiling CUDA source $< using nvc++..."
+	$(CUDA_CC) -c $(CUFLAGS) $< -o $@
+	@if [ -f $@ ]; then echo "$@ created"; else echo "Failed: $@"; exit 1; fi
 
 ######################################################################
 # Build libraries
+######################################################################
+
 libklt.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Creating libklt.a with object files..."
+	@echo "Creating libklt.a..."
 	rm -f libklt.a
 	ar ruv libklt.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Library libklt.a created successfully."
+	@echo "libklt.a created."
 
-libklt_acc.a: convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
-	@echo "Creating OpenACC-enabled libklt_acc.a..."
+# OpenACC version: convolve.o replaced correctly
+libklt_acc.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	@echo "Creating libklt_acc.a..."
 	rm -f libklt_acc.a
-	ar ruv libklt_acc.a convolve_acc.o $(filter-out convolve.o,$(ARCH_C:.c=.o)) $(ARCH_CU:.cu=.o)
-	@echo "Library libklt_acc.a created successfully."
+	ar ruv libklt_acc.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	@echo "libklt_acc.a created."
 
 ######################################################################
-# Build examples linking OpenACC-enabled library
+# Build examples using OpenACC-enabled library
+######################################################################
+
 all: libklt.a libklt_acc.a $(EXAMPLES)
 
 $(EXAMPLES): %: %.c libklt_acc.a
-	@echo "Building $@ with OpenACC-enabled library..."
-	$(ACC_CC) $(ACCFLAGS) $(CFLAGS) -o $@ $@.c -L. -lklt_acc $(LIB) -lm -lcudart
-	@if [ -f $@ ]; then echo "$@ built successfully"; else echo "Failed to build $@"; exit 1; fi
+	@echo "Linking $@ with OpenACC + CUDA library..."
+	$(ACC_CC) $(ACCFLAGS) $(CFLAGS) -o $@ $@.c -L. -lklt_acc $(LIB) -lm
+	@if [ -f $@ ]; then echo "$@ built"; else echo "Failed: $@"; exit 1; fi
 
 ######################################################################
-# Dependencies and cleanup
-depend:
-	makedepend $(ARCH_C) $(ARCH_CU) $(EXAMPLES:=.c)
+# Cleanup
+######################################################################
 
 clean:
 	rm -f *.o *.a $(EXAMPLES) *.tar *.tar.gz libklt.a libklt_acc.a \
 	      images/set*/feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
 	rm -f $(EXEC) $(OBJS) *~ gmon.out
+

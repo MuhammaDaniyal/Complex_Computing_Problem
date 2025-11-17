@@ -13,14 +13,8 @@
 #include "error.h"
 #include "klt_util.h" /* printing */
 #include <time.h>
-#include <sys/time.h>
 
 #define MAX_KERNEL_WIDTH 71
-
-// =============== GLOBAL STATE FOR PERSISTENT DATA ===============
-static int data_on_device = 0;
-static float *device_kernel_ptr = NULL;
-static int device_kernel_size = 0;
 
 // =============== GLOBAL TIMING ACCUMULATORS ===============
 static double total_gpu_compute_time = 0.0;
@@ -40,35 +34,6 @@ typedef struct {
 static ConvolutionKernel gauss_kernel;
 static ConvolutionKernel gaussderiv_kernel;
 static float sigma_last = -10.0;
-
-
-/*********************************************************************
- * Initialize persistent GPU data at program start
- *********************************************************************/
-void _KLT_InitOpenACCData() {
-    if (!data_on_device) {
-        // Pre-allocate kernel space on device (will update as needed)
-        device_kernel_size = MAX_KERNEL_WIDTH;
-        device_kernel_ptr = (float*)malloc(MAX_KERNEL_WIDTH * sizeof(float));
-        
-        #pragma acc enter data create(device_kernel_ptr[0:MAX_KERNEL_WIDTH])
-        
-        data_on_device = 1;
-        printf("[OpenACC] Initialized persistent GPU data\n");
-    }
-}
-
-/*********************************************************************
- * Cleanup persistent GPU data at program end
- *********************************************************************/
-void _KLT_CleanupOpenACCData() {
-    if (data_on_device) {
-        #pragma acc exit data delete(device_kernel_ptr[0:MAX_KERNEL_WIDTH])
-        free(device_kernel_ptr);
-        data_on_device = 0;
-        printf("[OpenACC] Cleaned up persistent GPU data\n");
-    }
-}
 
 /*********************************************************************
  * _KLTToFloatImage
@@ -170,436 +135,241 @@ void _KLTGetKernelWidths(float sigma, int *gauss_width, int *gaussderiv_width) {
 }
 
 /*********************************************************************
- * OpenACC Implementation for D4
- *********************************************************************/
+ * _convolveImageHoriz
+ */
+//#include "Horizontal_GPU.h"
+//#include <cuda.h>
+#include <sys/time.h>
 
-/*********************************************************************
- * OPTIMIZED HORIZONTAL CONVOLUTION
- * - Uses persistent data regions
- * - Constant memory for kernel
- * - Async operations
- * - Better loop structure
- *********************************************************************/
-static void _convolveImageHoriz_OpenACC_Optimized(
-    _KLT_FloatImage imgin, 
-    ConvolutionKernel kernel,
-    _KLT_FloatImage imgout) 
-{
+static void _convolveImageHoriz(_KLT_FloatImage imgin, ConvolutionKernel kernel, _KLT_FloatImage imgout) {
+  total_convolution_calls++;
+  if (!image_size_recorded) {
+    first_image_width = imgin->ncols;
+    first_image_height = imgin->nrows;
+    image_size_recorded = 1;
+  }
+
+  // ====================== GPU TIMING START ======================
+  //cudaEvent_t startGPU, stopGPU;
+  float gpuTime = 0.0f;
+  /*cudaEventCreate(&startGPU);
+  cudaEventCreate(&stopGPU);
+  cudaEventRecord(startGPU, 0);*/
+
+  // Step 1: Run GPU convolution (includes memory transfers)
+ //_convolveImageHorizUsingGPU(imgin, kernel.width, kernel.data, imgout);
+
+  // Stop GPU timer
+  //cudaEventRecord(stopGPU, 0);
+  //cudaEventSynchronize(stopGPU);
+  //cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
+
+  total_gpu_compute_time += gpuTime;
+
+  //printf("\n[GPU HORIZ] Time: %.3f ms (Image: %dx%d)\n", gpuTime, imgin->ncols, imgin->nrows);
+
+  //cudaEventDestroy(startGPU);
+  //cudaEventDestroy(stopGPU);
+  // ====================== GPU TIMING END ========================
+
+  // Step 2: Create a temporary CPU output image of same size
+  _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
+
+  // ====================== CPU TIMING START ======================
+  struct timeval startCPU, endCPU;
+  gettimeofday(&startCPU, NULL);
+  // ====================== Run CPU ===============================
     float *restrict ptrrow = imgin->data;
-    float *restrict ptrout = imgout->data;
+    float *restrict ptrout = cpuOut->data;
     int radius = kernel.width / 2;
     int w = kernel.width;
     float *restrict ker = kernel.data;
     int ncols = imgin->ncols, nrows = imgin->nrows;
-    int total_pixels = ncols * nrows;
-    
-    struct timeval start, end;
-    gettimeofday(&start, NULL);
-    
-    // Use present_or_copyin for images (will create if not present)
-    // Use copyin for kernel with const hint (constant memory)
-    #pragma acc data copyin(ker[0:w]) \
-                    present_or_copyin(ptrrow[0:total_pixels]) \
-                    present_or_copyout(ptrout[0:total_pixels])
-    {
-        // Async launch for better pipelining
-        #pragma acc parallel loop gang vector_length(256) async(1)
-        for (int j = 0; j < nrows; j++) {
-            
-            #pragma acc loop vector
-            for (int i = 0; i < ncols; i++) {
-                int idx = j * ncols + i;
-                
-                if (i < radius || i >= ncols - radius) {
-                    ptrout[idx] = 0.0f;
-                } else {
-                    float sum = 0.0f;
-                    // Unroll small kernels for better performance
-                    #pragma acc loop seq
-                    for (int k = 0; k < w; k++) {
-                        sum += ptrrow[idx - radius + k] * ker[w - 1 - k];
-                    }
-                    ptrout[idx] = sum;
-                }
-            }
-        }
-        
-        // Wait for completion
-        #pragma acc wait(1)
-    }
-    
-    gettimeofday(&end, NULL);
-    double time_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
-                     (end.tv_usec - start.tv_usec) / 1000.0;
-    
-    printf("[OpenACC HORIZ] Time: %.3f ms (Image: %dx%d)\n", 
-           time_ms, ncols, nrows);
-}
-
-/*********************************************************************
- * OPTIMIZED VERTICAL CONVOLUTION WITH TILING
- * - Tile columns to improve cache locality
- * - Use shared memory hint via cache directive
- * - Persistent data
- *********************************************************************/
-static void _convolveImageVert_OpenACC_Optimized(
-    _KLT_FloatImage imgin,
-    ConvolutionKernel kernel,
-    _KLT_FloatImage imgout) 
+#pragma acc data copyin(ker[0:w], ptrrow[0:ncols*nrows]) copyout(ptrout[0:ncols*nrows])  //Data Construct and Clauses
 {
-    float *restrict ptrcol = imgin->data;
-    float *restrict ptrout = imgout->data;
-    int radius = kernel.width / 2;
-    int w = kernel.width;
-    float *restrict ker = kernel.data;
-    int ncols = imgin->ncols, nrows = imgin->nrows;
-    int total_pixels = ncols * nrows;
-    
-    struct timeval start, end;
-    gettimeofday(&start, NULL);
-    
-    #pragma acc data copyin(ker[0:w]) \
-                    present_or_copyin(ptrcol[0:total_pixels]) \
-                    present_or_copyout(ptrout[0:total_pixels])
-    {
-        // Process in tiles for better cache usage
-        #define TILE_SIZE 32
-        int num_tiles = (ncols + TILE_SIZE - 1) / TILE_SIZE;
-        
-        #pragma acc parallel loop gang async(2)
-        for (int tile = 0; tile < num_tiles; tile++) {
-            int i_start = tile * TILE_SIZE;
-            int i_end = (i_start + TILE_SIZE < ncols) ? i_start + TILE_SIZE : ncols;
-            
-            #pragma acc loop vector
-            for (int i = i_start; i < i_end; i++) {
-                
-                // Process column
-                for (int j = 0; j < nrows; j++) {
-                    int idx = j * ncols + i;
-                    
-                    if (j < radius || j >= nrows - radius) {
-                        ptrout[idx] = 0.0f;
-                    } else {
-                        float sum = 0.0f;
-                        #pragma acc loop seq
-                        for (int k = 0; k < w; k++) {
-                            int row_idx = j - radius + k;
-                            sum += ptrcol[row_idx * ncols + i] * ker[k];
-                        }
-                        ptrout[idx] = sum;
-                    }
-                }
-            }
+   #pragma acc parallel loop gang vector       //Outer Loop Parallel Construct (distribute iterations among blocks and multiple threads in each block)
+   #pragma acc cache(ptrrow[0:ncols*nrows])    //Hint for Shared memory usage, not much benefit in case of horizontal convolution
+   for (int j = 0; j < nrows; j++) {
+
+    // left border
+   #pragma acc loop vector                     //Parallel execute it on threads of a gang
+    for (int i = 0; i < radius; i++)
+        ptrout[j*ncols + i] = 0.0f;
+
+    // middle
+    #pragma acc loop vector
+    for (int i = radius; i < ncols - radius; i++) {
+        float sum = 0.0f;
+        int x = 0;
+        for (int k = w-1; k >=0 ; k--) {
+            int idx = (j*ncols + i) - radius + x;
+            sum += ptrrow[idx] * ker[k];
+            x++;
         }
-        
-        #pragma acc wait(2)
+        ptrout[j*ncols + i] = sum;
     }
-    
-    gettimeofday(&end, NULL);
-    double time_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
-                     (end.tv_usec - start.tv_usec) / 1000.0;
-    
-    printf("[OpenACC VERT] Time: %.3f ms (Image: %dx%d)\n", 
-           time_ms, ncols, nrows);
+
+    // right border
+    #pragma acc loop vector
+    for (int i = ncols - radius; i < ncols; i++)
+        ptrout[j*ncols + i] = 0.0f;
+}
+}
+
+  gettimeofday(&endCPU, NULL);
+  double cpu_time_ms = (endCPU.tv_sec - startCPU.tv_sec) * 1000.0 +
+                       (endCPU.tv_usec - startCPU.tv_usec) / 1000.0;
+
+  total_cpu_compute_time += cpu_time_ms;
+
+  //printf("[CPU HORIZ] Time: %.3f ms | Speedup: %.2fx\n", cpu_time_ms, cpu_time_ms / gpuTime);
+  // ====================== CPU TIMING END ========================
+
+  // Step 4: Compute absolute difference between CPU and GPU results
+    float totalDiff = 0.0f;
+    float maxDiff = 0.0f;
+    int size = imgin->ncols * imgin->nrows;
+
+    for (int idx = 0; idx < size; idx++) {
+      float diff = fabs(cpuOut->data[idx] - imgout->data[idx]);
+      totalDiff += diff;
+      if (diff > maxDiff)
+        maxDiff = diff;
+    }
+
+    float meanDiff = totalDiff / size;
+
+    //printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
+
+    if (meanDiff > 1e-3) {
+      //printf(" !!!  WARNING: High error detected!\n");
+    }
+
+  // Step 5: Free temporary CPU result image
+  _KLTFreeFloatImage(cpuOut);
 }
 
 /*********************************************************************
- * ALTERNATIVE: Fully pipelined version with manual data management
- *********************************************************************/
-static void _convolveImageHoriz_OpenACC_Pipelined(
-    _KLT_FloatImage imgin, 
-    ConvolutionKernel kernel,
-    _KLT_FloatImage imgout) 
-{
-    float *ptrrow = imgin->data;
-    float *ptrout = imgout->data;
-    int radius = kernel.width / 2;
-    int w = kernel.width;
-    float *ker = kernel.data;
-    int ncols = imgin->ncols, nrows = imgin->nrows;
-    int total_pixels = ncols * nrows;
-    
-    // Manually manage data transfers with async
-    #pragma acc enter data copyin(ptrrow[0:total_pixels]) async(1)
-    #pragma acc enter data create(ptrout[0:total_pixels]) async(1)
-    #pragma acc enter data copyin(ker[0:w]) async(1)
-    
-    #pragma acc wait(1)
-    
-    struct timeval start, end;
-    gettimeofday(&start, NULL);
-    
-    // Compute on GPU
-    #pragma acc parallel loop gang vector_length(256) \
-                present(ptrrow[0:total_pixels]) \
-                present(ptrout[0:total_pixels]) \
-                present(ker[0:w]) \
-                async(2)
-    for (int j = 0; j < nrows; j++) {
-        #pragma acc loop vector
-        for (int i = 0; i < ncols; i++) {
-            int idx = j * ncols + i;
-            
-            if (i < radius || i >= ncols - radius) {
-                ptrout[idx] = 0.0f;
-            } else {
-                float sum = 0.0f;
-                #pragma acc loop seq
-                for (int k = 0; k < w; k++) {
-                    sum += ptrrow[idx - radius + k] * ker[w - 1 - k];
-                }
-                ptrout[idx] = sum;
-            }
-        }
-    }
-    
-    // Copy back results
-    #pragma acc exit data copyout(ptrout[0:total_pixels]) async(2)
-    #pragma acc wait(2)
-    
-    // Cleanup - keep input for next use, delete output
-    #pragma acc exit data delete(ptrrow[0:total_pixels], ker[0:w])
-    
-    gettimeofday(&end, NULL);
-    double time_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
-                     (end.tv_usec - start.tv_usec) / 1000.0;
-    
-    printf("[OpenACC HORIZ Pipeline] Time: %.3f ms\n", time_ms);
-}
+ * _convolveImageVert - OpenACC Parallelized Version
+ */
+ #include <sys/time.h>
 
-/*********************************************************************
- * UNIFIED DATA MANAGEMENT FOR ENTIRE PYRAMID
- * Keep all pyramid data on GPU across multiple convolutions
- *********************************************************************/
-typedef struct {
-    float *data;
-    int ncols;
-    int nrows;
-    int on_device;
-} ManagedImage;
-
-static ManagedImage managed_images[10]; // For pyramid levels
-static int num_managed = 0;
-
-void _KLT_PutImageOnDevice(_KLT_FloatImage img) {
-    int size = img->ncols * img->nrows;
-    
-    #pragma acc enter data copyin(img->data[0:size])
-    
-    // Track it
-    if (num_managed < 10) {
-        managed_images[num_managed].data = img->data;
-        managed_images[num_managed].ncols = img->ncols;
-        managed_images[num_managed].nrows = img->nrows;
-        managed_images[num_managed].on_device = 1;
-        num_managed++;
-    }
-}
-
-void _KLT_GetImageFromDevice(_KLT_FloatImage img) {
-    int size = img->ncols * img->nrows;
-    
-    #pragma acc exit data copyout(img->data[0:size])
-    
-    // Remove from tracking
-    for (int i = 0; i < num_managed; i++) {
-        if (managed_images[i].data == img->data) {
-            managed_images[i].on_device = 0;
-            break;
-        }
-    }
-}
-
-void _KLT_UpdateImageOnDevice(_KLT_FloatImage img) {
-    int size = img->ncols * img->nrows;
-    
-    #pragma acc update device(img->data[0:size])
-}
-
-void _KLT_FreeDeviceImages() {
-    for (int i = 0; i < num_managed; i++) {
-        if (managed_images[i].on_device) {
-            int size = managed_images[i].ncols * managed_images[i].nrows;
-            float *data = managed_images[i].data;
-            
-            #pragma acc exit data delete(data[0:size])
-            
-            managed_images[i].on_device = 0;
-        }
-    }
-    num_managed = 0;
-}
-
-/*********************************************************************
- * WRAPPER FUNCTIONS - Choose optimization level
- *********************************************************************/
-
-// Set which optimization to use
-#define USE_OPTIMIZED_VERSION 1  // 0=basic, 1=optimized, 2=pipelined
-
-static void _convolveImageHoriz(_KLT_FloatImage imgin, 
-                               ConvolutionKernel kernel,
-                               _KLT_FloatImage imgout) 
-{
+static void _convolveImageVert(_KLT_FloatImage imgin, ConvolutionKernel kernel,
+                               _KLT_FloatImage imgout) {
     total_convolution_calls++;
     if (!image_size_recorded) {
         first_image_width = imgin->ncols;
         first_image_height = imgin->nrows;
         image_size_recorded = 1;
     }
-    
-    // Initialize persistent data if needed
-    if (!data_on_device) {
-        _KLT_InitOpenACCData();
-    }
-    
-    // Create CPU baseline output
-    _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
-    
-    // Time CPU version
-    struct timeval startCPU, endCPU;
-    gettimeofday(&startCPU, NULL);
-    
-    // CPU convolution
-    {
-        float *ptrrow = imgin->data;
-        float *ptrout = cpuOut->data;
-        int radius = kernel.width / 2;
-        int ncols = imgin->ncols, nrows = imgin->nrows;
-        
-        for (int j = 0; j < nrows; j++) {
-            for (int i = 0; i < radius; i++)
-                ptrout[j * ncols + i] = 0.0f;
-            
-            for (int i = radius; i < ncols - radius; i++) {
-                float sum = 0.0f;
-                for (int k = 0; k < kernel.width; k++) {
-                    sum += ptrrow[j * ncols + i - radius + k] * 
-                           kernel.data[kernel.width - 1 - k];
-                }
-                ptrout[j * ncols + i] = sum;
-            }
-            
-            for (int i = ncols - radius; i < ncols; i++)
-                ptrout[j * ncols + i] = 0.0f;
-        }
-    }
-    
-    gettimeofday(&endCPU, NULL);
-    double cpu_time_ms = (endCPU.tv_sec - startCPU.tv_sec) * 1000.0 +
-                         (endCPU.tv_usec - startCPU.tv_usec) / 1000.0;
-    
-    total_cpu_compute_time += cpu_time_ms;
-    printf("\n[CPU HORIZ] Time: %.3f ms\n", cpu_time_ms);
-    
-    // Run optimized OpenACC version
+
+    // ====================== GPU TIMING START ======================
+    //cudaEvent_t startGPU, stopGPU;
+    float gpuTime = 0.0f;
+    //cudaEventCreate(&startGPU);
+    //cudaEventCreate(&stopGPU);
+    //cudaEventRecord(startGPU, 0);
+
+    // Step 1: Run GPU convolution
+    //_convolveImageVertUsingGPU(imgin, kernel.width, kernel.data, imgout);
+
+    // Stop GPU timer
+    //cudaEventRecord(stopGPU, 0);
+    //cudaEventSynchronize(stopGPU);
+    //cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
+
+    //printf("\n[GPU VERT] Time: %.3f ms (Image: %dx%d)\n", gpuTime, imgin->ncols, imgin->nrows);
+
+    //cudaEventDestroy(startGPU);
+    //cudaEventDestroy(stopGPU);
+    // ====================== GPU TIMING END ========================
+
+    // Step 2: Create a temporary CPU output image for OpenACC version
+    _KLT_FloatImage openaccOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
+
+    // ====================== OpenACC TIMING START ======================
     struct timeval startACC, endACC;
     gettimeofday(&startACC, NULL);
     
-#if USE_OPTIMIZED_VERSION == 1
-    _convolveImageHoriz_OpenACC_Optimized(imgin, kernel, imgout);
-#elif USE_OPTIMIZED_VERSION == 2
-    _convolveImageHoriz_OpenACC_Pipelined(imgin, kernel, imgout);
-#else
-    _convolveImageHoriz_OpenACC(imgin, kernel, imgout);  // Basic version
-#endif
-    
-    gettimeofday(&endACC, NULL);
-    double acc_time_ms = (endACC.tv_sec - startACC.tv_sec) * 1000.0 +
-                         (endACC.tv_usec - startACC.tv_usec) / 1000.0;
-    
-    total_gpu_compute_time += acc_time_ms;
-    
-    printf("[OpenACC Speedup] %.2fx over CPU\n", cpu_time_ms / acc_time_ms);
-    
-    // Verify correctness
-    float totalDiff = 0.0f, maxDiff = 0.0f;
-    int size = imgin->ncols * imgin->nrows;
-    for (int idx = 0; idx < size; idx++) {
-        float diff = fabs(cpuOut->data[idx] - imgout->data[idx]);
-        totalDiff += diff;
-        if (diff > maxDiff) maxDiff = diff;
-    }
-    printf("  Accuracy: Mean=%.2e, Max=%.2e\n", totalDiff / size, maxDiff);
-    
-    _KLTFreeFloatImage(cpuOut);
-}
+    // ====================== OpenACC VERTICAL CONVOLUTION ======================
+    float *ptrcol = imgin->data;
+    float *ptrout = openaccOut->data;
+    int radius = kernel.width / 2;
+    int ncols = imgin->ncols, nrows = imgin->nrows;
+    int w = kernel.width;
+    float* ker = kernel.data;
 
-// Similar optimizations for vertical...
-static void _convolveImageVert(_KLT_FloatImage imgin,
-                              ConvolutionKernel kernel,
-                              _KLT_FloatImage imgout) 
-{
-    total_convolution_calls++;
-    
-    _KLT_FloatImage cpuOut = _KLTCreateFloatImage(imgin->ncols, imgin->nrows);
-    
-    // Time CPU
-    struct timeval startCPU, endCPU;
-    gettimeofday(&startCPU, NULL);
-    
+    assert(kernel.width % 2 == 1);
+    assert(imgin != openaccOut);
+    assert(openaccOut->ncols >= imgin->ncols);
+    assert(openaccOut->nrows >= imgin->nrows);
+
+    // Copy kernel to GPU once
+    #pragma acc data copyin(ker[0:w]) \
+                    copyin(ptrcol[0:ncols*nrows]) \
+                    copyout(ptrout[0:ncols*nrows])
     {
-        float *ptrcol = imgin->data;
-        float *ptrout = cpuOut->data;
-        int radius = kernel.width / 2;
-        int ncols = imgin->ncols, nrows = imgin->nrows;
-        
+        // Process each column in parallel - perfect for OpenACC!
+        #pragma acc parallel loop gang vector
         for (int i = 0; i < ncols; i++) {
-            for (int j = 0; j < radius; j++)
-                ptrout[j * ncols + i] = 0.0f;
             
+            // Zero topmost rows for this column
+            #pragma acc loop vector
+            for (int j = 0; j < radius; j++) {
+                ptrout[j * ncols + i] = 0.0f;
+            }
+
+            // Convolve middle rows with kernel for this column
+            #pragma acc loop vector
             for (int j = radius; j < nrows - radius; j++) {
                 float sum = 0.0f;
-                for (int k = 0; k < kernel.width; k++) {
-                    sum += ptrcol[(j - radius + k) * ncols + i] * kernel.data[k];
+                
+                // Vertical convolution - access memory with stride ncols
+                #pragma acc loop reduction(+:sum)
+                for (int k = 0; k < w; k++) {
+                    int row_idx = j - radius + k;
+                    int idx = row_idx * ncols + i;
+                    sum += ptrcol[idx] * ker[k];
                 }
                 ptrout[j * ncols + i] = sum;
             }
-            
-            for (int j = nrows - radius; j < nrows; j++)
+
+            // Zero bottom most rows for this column
+            #pragma acc loop vector
+            for (int j = nrows - radius; j < nrows; j++) {
                 ptrout[j * ncols + i] = 0.0f;
+            }
         }
     }
-    
-    gettimeofday(&endCPU, NULL);
-    double cpu_time_ms = (endCPU.tv_sec - startCPU.tv_sec) * 1000.0 +
-                         (endCPU.tv_usec - startCPU.tv_usec) / 1000.0;
-    
-    total_cpu_compute_time += cpu_time_ms;
-    printf("\n[CPU VERT] Time: %.3f ms\n", cpu_time_ms);
-    
-    // Run optimized OpenACC
-    struct timeval startACC, endACC;
-    gettimeofday(&startACC, NULL);
-    
-#if USE_OPTIMIZED_VERSION >= 1
-    _convolveImageVert_OpenACC_Optimized(imgin, kernel, imgout);
-#else
-    _convolveImageVert_OpenACC(imgin, kernel, imgout);
-#endif
-    
+
     gettimeofday(&endACC, NULL);
     double acc_time_ms = (endACC.tv_sec - startACC.tv_sec) * 1000.0 +
-                         (endACC.tv_usec - startACC.tv_usec) / 1000.0;
-    
-    total_gpu_compute_time += acc_time_ms;
-    
-    printf("[OpenACC Speedup] %.2fx over CPU\n", cpu_time_ms / acc_time_ms);
-    
-    // Verify
-    float totalDiff = 0.0f, maxDiff = 0.0f;
+                        (endACC.tv_usec - startACC.tv_usec) / 1000.0;
+
+    //printf("[OpenACC VERT] Time: %.3f ms | Speedup vs GPU: %.2fx\n", acc_time_ms, gpuTime / acc_time_ms);
+    // ====================== OpenACC TIMING END ========================
+
+    // Step 4: Compute absolute difference between OpenACC and GPU results
+    float totalDiff = 0.0f;
+    float maxDiff = 0.0f;
     int size = imgin->ncols * imgin->nrows;
+
     for (int idx = 0; idx < size; idx++) {
-        float diff = fabs(cpuOut->data[idx] - imgout->data[idx]);
+        float diff = fabs(openaccOut->data[idx] - imgout->data[idx]);
         totalDiff += diff;
         if (diff > maxDiff) maxDiff = diff;
     }
-    printf("  Accuracy: Mean=%.2e, Max=%.2e\n", totalDiff / size, maxDiff);
-    
-    _KLTFreeFloatImage(cpuOut);
-}
 
+    float meanDiff = totalDiff / size;
+    //printf("  Accuracy: Mean=%.2e, Max=%.2e\n", meanDiff, maxDiff);
+
+    if (meanDiff > 1e-3) {
+        //printf("  !!! WARNING: High error detected!\n");
+    }
+
+    // Step 5: Free temporary OpenACC result image
+    _KLTFreeFloatImage(openaccOut);
+}
 /*********************************************************************
  * _convolveSeparate
  */
@@ -665,28 +435,27 @@ void _KLTComputeSmoothedImage(_KLT_FloatImage img, float sigma,
  * Call this at the end of your program to print cumulative stats
  */
 
-void KLT_PrintPerformanceStats(double gpu_time) 
-{
+void KLT_PrintPerformanceStats(double cpu_time) {
   printf("\n");
-  printf("╔═════════════════════════════════════════════════════════╗\n");
-  printf("║             PERFORMANCE SUMMARY (D4 Report)             ║\n");
-  printf("╠═════════════════════════════════════════════════════════╣\n");
-  printf("║First Image Size:             %d x %d\n", first_image_width,
+  printf("-----------------------------------------------------------\n");
+  printf("              PERFORMANCE SUMMARY (D4 Report)              \n");
+  printf("-----------------------------------------------------------\n");
+  printf("First Image Size:              %d x %d\n", first_image_width,
          first_image_height);
-  printf("║Total Convolution Calls:       %d\n", total_convolution_calls);
-  printf("║---------------------------------------------------------║\n");
-  printf("║Total GPU Compute Time:                  %.2f ms ║\n", total_gpu_compute_time);
-  printf("║Total CPU Compute Time:                  %.2f ms ║\n", total_cpu_compute_time);
-  printf("║---------------------------------------------------------║\n");
-  printf("║Overall Speedup (GPU vs CPU):              %.2fx ║\n",
+  printf("Total Convolution Calls:       %d\n", total_convolution_calls);
+  printf("-----------------------------------------------------------\n");
+  printf("Total GPU Compute Time:        %.2f ms\n", total_gpu_compute_time);
+  printf("Total CPU Compute Time:        %.2f ms\n", total_cpu_compute_time);
+  printf("-----------------------------------------------------------\n");
+  printf("Overall Speedup (GPU vs CPU):  %.2fx\n",
          total_cpu_compute_time / total_gpu_compute_time);
-  printf("║Time Saved:                              %.2f ms ║\n",
+  printf("Time Saved:                    %.2f ms\n",
          total_cpu_compute_time - total_gpu_compute_time);
-  printf("║Percentage GPU is Faster:                 %.1f%% ║\n",
+  printf("Percentage GPU is Faster:      %.1f%%\n",
          ((total_cpu_compute_time - total_gpu_compute_time) /
           total_cpu_compute_time) *
              100.0);
-  printf("╚═════════════════════════════════════════════════════════╝\n");
+  printf("-----------------------------------------------------------\n");
   printf("\n");
 }
 
@@ -702,15 +471,6 @@ void KLT_ResetPerformanceStats(void) {
   total_memory_transfer_time = 0.0;
   total_convolution_calls = 0;
 }
-
-/*********************************************************************
- * Call at program end to cleanup
- *********************************************************************/
-void KLT_CleanupOpenACC(void) {
-    _KLT_CleanupOpenACCData();
-    _KLT_FreeDeviceImages();
-}
-
 
 /*
 for (j = 0; j < nrows; j++) {
