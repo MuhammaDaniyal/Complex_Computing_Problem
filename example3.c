@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
   // =================================
 
   // Initialize OpenACC
-  acc_init(acc_device_nvidia);
+  //acc_init(acc_device_nvidia);
   
   KLT_ResetPerformanceStats();
   int nFrames = 10;
@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
   free(img2);
   
   // Cleanup at end
-  KLT_CleanupOpenACC();
+  //KLT_CleanupOpenACC();
   
   // ========== STOP TIMER & CALCULATE ==========
   gettimeofday(&end, NULL);
@@ -107,13 +107,16 @@ int main(int argc, char *argv[])
   elapsed_time += (end.tv_usec - start.tv_usec) / 1000.0;   // us to ms
   
   KLT_PrintPerformanceStats(elapsed_time);
+  double cpu_time = 2804.13;
+  double speedup = cpu_time / elapsed_time;
 
   printf("\n");
   printf("╔════════════════════════════════════════════╗\n");
   printf("║   TOTAL PROGRAM EXECUTION TIME             ║\n");
   printf("╠════════════════════════════════════════════╣\n");
-  printf("║   Time: %10.2f ms                    ║\n", elapsed_time);
-  printf("║   Time: %10.3f seconds               ║\n", elapsed_time / 1000.0);
+  printf("║   Time: %10.2f ms                      ║\n", elapsed_time);
+  printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
+  printf("║   Time: %10.2f x                       ║\n", speedup);
   printf("╚════════════════════════════════════════════╝\n");
   // ============================================
 
