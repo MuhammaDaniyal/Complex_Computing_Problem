@@ -2,8 +2,8 @@
 # Compilers (NVIDIA HPC SDK)
 ######################################################################
 
-ACC_CC   = nvc          # OpenACC C compiler
-CUDA_CC  = nvc++        # CUDA/C++ compiler (replaces nvcc)
+ACC_CC  = nvc             # OpenACC C compiler
+CUDA_CC = nvc++           # CUDA/C++ compiler (replaces nvcc)
 
 ######################################################################
 # Flags
@@ -12,14 +12,14 @@ CUDA_CC  = nvc++        # CUDA/C++ compiler (replaces nvcc)
 FLAG1   = -DNDEBUG
 CFLAGS  = $(FLAG1) $(FLAG2) -pg
 
-# CUDA flags for nvc++ (correct form — nvc++ does NOT support -maxrregcount)
+# CUDA flags for nvc++ 
 CUFLAGS = -cuda -O3 -gpu=maxregcount:48
 
 # OpenACC flags
 ACCFLAGS = -acc -Minfo=accel -fast
 
 ######################################################################
-# Source files
+# Source files and Object lists
 ######################################################################
 
 EXAMPLES = example3
@@ -30,14 +30,22 @@ ARCH_C = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
 
 # CUDA files
 ARCH_CU = Horizontal_GPU.cu
+ARCH_CU_OBJS = $(ARCH_CU:.cu=.o)
 
 # Which C files contain OpenACC?
 ACC_SOURCES = convolve.c
+ACC_OBJS = $(ACC_SOURCES:.c=_acc.o)
 
-# Regular CPU-only C files
-CPU_SOURCES = $(filter-out $(ACC_SOURCES),$(ARCH_C))
+# C files compiled for CPU (all C files MINUS the OpenACC files)
+CPU_ONLY_SOURCES = $(filter-out $(ACC_SOURCES),$(ARCH_C))
+CPU_ONLY_OBJS = $(CPU_ONLY_SOURCES:.c=.o)
 
-# No need for CUDA toolkit paths — HPC SDK provides all required libs internally
+# All object files for the standard library
+STANDARD_OBJS = $(ARCH_C:.c=.o) $(ARCH_CU_OBJS)
+# All object files for the OpenACC library
+ACC_LIBRARY_OBJS = $(CPU_ONLY_OBJS) $(ACC_OBJS) $(ARCH_CU_OBJS)
+
+
 LIB = -L/usr/local/lib -L/usr/lib
 
 ######################################################################
@@ -47,18 +55,18 @@ LIB = -L/usr/local/lib -L/usr/lib
 .SUFFIXES: .c .o .cu
 
 ######################################################################
-# Compile C files without OpenACC
+# Compile C files without OpenACC (For all files *except* convolve.c)
 ######################################################################
-$(CPU_SOURCES:.c=.o): %.o: %.c
+$(CPU_ONLY_OBJS): %.o: %.c
 	@echo "Compiling $< (C, CPU only)..."
 	$(ACC_CC) -c $(CFLAGS) $< -o $@
 	@if [ -f $@ ]; then echo "$@ created"; else echo "Failed: $@"; exit 1; fi
 
 ######################################################################
-# Compile OpenACC C files
+# Compile OpenACC C files (Only convolve.c)
 ######################################################################
-$(ACC_SOURCES:.c=.o): %.o: %.c
-	@echo "Compiling $< with OpenACC..."
+$(ACC_OBJS): %_acc.o: %.c
+	@echo "Compiling $< with OpenACC to $@..."
 	$(ACC_CC) $(ACCFLAGS) -c $< -o $@
 	@if [ -f $@ ]; then echo "$@ created"; else exit 1; fi
 
@@ -74,17 +82,16 @@ $(ACC_SOURCES:.c=.o): %.o: %.c
 # Build libraries
 ######################################################################
 
-libklt.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Creating libklt.a..."
+libklt.a: $(STANDARD_OBJS)
+	@echo "Creating libklt.a (Standard Library)..."
 	rm -f libklt.a
-	ar ruv libklt.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	ar ruv libklt.a $(STANDARD_OBJS)
 	@echo "libklt.a created."
 
-# OpenACC version: convolve.o replaced correctly
-libklt_acc.a: $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
-	@echo "Creating libklt_acc.a..."
+libklt_acc.a: $(ACC_LIBRARY_OBJS)
+	@echo "Creating libklt_acc.a (OpenACC Library)..."
 	rm -f libklt_acc.a
-	ar ruv libklt_acc.a $(ARCH_C:.c=.o) $(ARCH_CU:.cu=.o)
+	ar ruv libklt_acc.a $(ACC_LIBRARY_OBJS)
 	@echo "libklt_acc.a created."
 
 ######################################################################
@@ -106,4 +113,3 @@ clean:
 	rm -f *.o *.a $(EXAMPLES) *.tar *.tar.gz libklt.a libklt_acc.a \
 	      images/set*/feat*.ppm features.ft features.txt gmon.out p.dot finalProfile.pdf profile_output.txt
 	rm -f $(EXEC) $(OBJS) *~ gmon.out
-
