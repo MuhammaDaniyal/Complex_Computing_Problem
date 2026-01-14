@@ -5,13 +5,11 @@ processing.  The features are stored in a feature table, which is then
 saved to a text file; each feature list is also written to a PPM file.
 **********************************************************************/
 
-#include <openacc.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <sys/time.h>
 #include "pnmio.h"
 #include "klt.h"
+#include <sys/time.h>
 
 /* #define REPLACE */
 
@@ -21,7 +19,7 @@ int RunExample3()
 int main(int argc, char *argv[])
 #endif
 {
-  KLT_ResetPerformanceStats();
+  //KLT_ResetPerformanceStats();
   int nFrames = 10;
 
   if(argc < 3)
@@ -71,19 +69,19 @@ int main(int argc, char *argv[])
     gettimeofday(&start, NULL);
     // =================================
 
-    // Track features across subsequent frames
-    for (i = 1 ; i < nFrames ; i++)  {
-        sprintf(fnamein, "%simg%d.pgm", imgPath, i);
-        pgmReadFile(fnamein, img2, &ncols, &nrows);
-        KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
+  // Track features across subsequent frames
+  for (i = 1 ; i < nFrames ; i++)  {
+    sprintf(fnamein, "%simg%d.pgm", imgPath, i);
+    pgmReadFile(fnamein, img2, &ncols, &nrows);
+    KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
 #ifdef REPLACE
-        KLTReplaceLostFeatures(tc, img2, ncols, nrows, fl);
+    KLTReplaceLostFeatures(tc, img2, ncols, nrows, fl);
 #endif
-        KLTStoreFeatureList(fl, ft, i);
-        sprintf(fnameout, "%sfeat%d.ppm", imgPath, i);
-        KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
-    }
-    
+    KLTStoreFeatureList(fl, ft, i);
+    sprintf(fnameout, "%sfeat%d.ppm", imgPath, i);
+    KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
+  }
+
     // ========== STOP TIMER & CALCULATE ==========
     gettimeofday(&end, NULL);
     
@@ -101,17 +99,21 @@ int main(int argc, char *argv[])
     free(img1);
     free(img2);
     
+    // Cleanup at end
+    //KLT_CleanupOpenACC();
     
+  
+  //KLT_PrintPerformanceStats(elapsed_time);
   double cpu_time = 6153.47;
+  //double cpu_time = 6153.47;
   double speedup = cpu_time / elapsed_time;
 
   printf("\n");
   printf("╔════════════════════════════════════════════╗\n");
-  printf("║   TOTAL PROGRAM EXECUTION TIME (ACC)       ║\n");
+  printf("║   TOTAL PROGRAM EXECUTION TIME (CPU)       ║\n");
   printf("╠════════════════════════════════════════════╣\n");
   printf("║   Time: %10.2f ms                      ║\n", elapsed_time);
   printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
-  printf("║   Time: %10.2f x                       ║\n", speedup);
   printf("╚════════════════════════════════════════════╝\n");
   // ============================================
 
