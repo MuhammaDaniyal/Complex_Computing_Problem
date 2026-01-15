@@ -7,9 +7,10 @@ saved to a text file; each feature list is also written to a PPM file.
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/time.h>
 #include "pnmio.h"
 #include "klt.h"
-#include <sys/time.h>
 
 /* #define REPLACE */
 
@@ -99,14 +100,6 @@ int main(int argc, char *argv[])
     free(img1);
     free(img2);
     
-    // Cleanup at end
-    //KLT_CleanupOpenACC();
-    
-  
-  //KLT_PrintPerformanceStats(elapsed_time);
-  double cpu_time = 6153.47;
-  //double cpu_time = 6153.47;
-  double speedup = cpu_time / elapsed_time;
 
   printf("\n");
   printf("╔════════════════════════════════════════════╗\n");
@@ -115,7 +108,8 @@ int main(int argc, char *argv[])
   printf("║   Time: %10.2f ms                      ║\n", elapsed_time);
   printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
   printf("╚════════════════════════════════════════════╝\n");
-  // ============================================
+
+  //KLT_PrintPerformanceStats();
 
   return 0;
 }

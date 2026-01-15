@@ -21,7 +21,7 @@ int RunExample3()
 int main(int argc, char *argv[])
 #endif
 {
-  KLT_ResetPerformanceStats();
+  //KLT_ResetPerformanceStats();
   int nFrames = 10;
 
   if(argc < 3)
@@ -65,7 +65,6 @@ int main(int argc, char *argv[])
     sprintf(fnameout, "%sfeat0.ppm", imgPath);
     KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
-
     // ========== START TIMER ==========
     struct timeval start, end;
     gettimeofday(&start, NULL);
@@ -102,6 +101,7 @@ int main(int argc, char *argv[])
     free(img2);
     
     
+  // Write your own CPU time here according to the CPU Version 1.0 and same image dataset
   double cpu_time = 6153.47;
   double speedup = cpu_time / elapsed_time;
 
@@ -113,7 +113,8 @@ int main(int argc, char *argv[])
   printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
   printf("║   Time: %10.2f x                       ║\n", speedup);
   printf("╚════════════════════════════════════════════╝\n");
-  // ============================================
+
+  //KLT_PrintPerformanceStats();
 
   return 0;
 }

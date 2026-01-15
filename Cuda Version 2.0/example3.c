@@ -7,6 +7,8 @@ saved to a text file; each feature list is also written to a PPM file.
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/time.h>
 #include "pnmio.h"
 #include "klt.h"
 
@@ -18,7 +20,16 @@ int RunExample3()
 int main()
 #endif
 {
-  KLT_ResetPerformanceStats();
+  //KLT_ResetPerformanceStats();
+  int nFrames = 10;
+  
+  if(argc < 3)
+  {
+    printf("No arguments provided! Using default image set -> set1\n");
+    argv[1] = "set1";
+  }
+  nFrames = atoi(argv[2]);
+  //nFrames = 10;  // Currently keeping same number of frames for all
   
   unsigned char *img1, *img2;
   char fnamein[200], fnameout[200], imgPath[100];
@@ -30,8 +41,10 @@ int main()
   int i;
 
   /* Choose image set */
-  const char *setName = "set2";   // set1, set2, set3, ...
+  char setName[100];   // set1, set2, set3, ...
+  strcpy(setName, argv[1]);
   sprintf(imgPath, "images/%s/", setName);
+  printf("\n--- Using image set: %s ---", setName);
 
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
@@ -51,6 +64,11 @@ int main()
   sprintf(fnameout, "%sfeat0.ppm", imgPath);
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
+  // ========== START TIMER ==========
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+  // =================================
+
   // Track features across subsequent frames
   for (i = 1 ; i < nFrames ; i++)  {
     sprintf(fnamein, "%simg%d.pgm", imgPath, i);
@@ -64,6 +82,12 @@ int main()
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
 
+  // ========== STOP TIMER & CALCULATE ==========
+  gettimeofday(&end, NULL);
+    
+  double elapsed_time = (end.tv_sec - start.tv_sec) * 1000.0;      // sec to ms
+  elapsed_time += (end.tv_usec - start.tv_usec) / 1000.0;   // us to ms
+    
   // Write results
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
@@ -74,8 +98,22 @@ int main()
   KLTFreeTrackingContext(tc);
   free(img1);
   free(img2);
-  
-  KLT_PrintPerformanceStats();
+
+
+  // Write your own CPU time here according to the CPU Version 1.0 and same image dataset
+  double cpu_time = 6153.47;    
+  double speedup = cpu_time / elapsed_time;
+
+  printf("\n");
+  printf("╔════════════════════════════════════════════╗\n");
+  printf("║   TOTAL PROGRAM EXECUTION TIME (V2)        ║\n");
+  printf("╠════════════════════════════════════════════╣\n");
+  printf("║   Time: %10.2f ms                      ║\n", elapsed_time);
+  printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
+  printf("║   Time: %10.2f x                       ║\n", speedup);
+  printf("╚════════════════════════════════════════════╝\n");
+
+  //KLT_PrintPerformanceStats();
 
   return 0;
 }

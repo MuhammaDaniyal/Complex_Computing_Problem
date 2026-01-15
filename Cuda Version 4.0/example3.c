@@ -19,7 +19,7 @@ int RunExample3()
 int main(int argc, char *argv[])
 #endif
 {
-  KLT_ResetPerformanceStats();
+  //KLT_ResetPerformanceStats();
   int nFrames = 10;
 
   if(argc < 3)
@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
     argv[1] = "set1";
   }
   nFrames = atoi(argv[2]);
-  nFrames = 10;  // Currently keeping same number of frames for all
+  //nFrames = 10;  // Currently keeping same number of frames for all
   
   unsigned char *img1, *img2;
   char fnamein[200], fnameout[200], imgPath[100];
@@ -63,6 +63,11 @@ int main(int argc, char *argv[])
   sprintf(fnameout, "%sfeat0.ppm", imgPath);
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
+  // ========== START TIMER ==========
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+  // =================================
+
   // Track features across subsequent frames
   for (i = 1 ; i < nFrames ; i++)  {
     sprintf(fnamein, "%simg%d.pgm", imgPath, i);
@@ -76,6 +81,12 @@ int main(int argc, char *argv[])
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
 
+  // ========== STOP TIMER & CALCULATE ==========
+  gettimeofday(&end, NULL);
+    
+  double elapsed_time = (end.tv_sec - start.tv_sec) * 1000.0;      // sec to ms
+  elapsed_time += (end.tv_usec - start.tv_usec) / 1000.0;   // us to ms
+
   // Write results
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
@@ -86,8 +97,22 @@ int main(int argc, char *argv[])
   KLTFreeTrackingContext(tc);
   free(img1);
   free(img2);
+
   
-  KLT_PrintPerformanceStats();
+  // Write your own CPU time here according to the CPU Version 1.0 and same image dataset
+  double cpu_time = 6153.47;
+  double speedup = cpu_time / elapsed_time;
+
+  printf("\n");
+  printf("╔════════════════════════════════════════════╗\n");
+  printf("║   TOTAL PROGRAM EXECUTION TIME (V4)       ║\n");
+  printf("╠════════════════════════════════════════════╣\n");
+  printf("║   Time: %10.2f ms                      ║\n", elapsed_time);
+  printf("║   Time: %10.3f seconds                 ║\n", elapsed_time / 1000.0);
+  printf("║   Time: %10.2f x                       ║\n", speedup);
+  printf("╚════════════════════════════════════════════╝\n");
+  
+  //KLT_PrintPerformanceStats();
 
   return 0;
 }
